@@ -1,0 +1,505 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: dtsen_rag_postgres
+    environment:
+      POSTGRES_DB: rag_db
+      POSTGRES_USER: rag_user
+      POSTGRES_PASSWORD: rag_pass
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rag_user -d rag_db"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  redis:
+    image: redis:7-alpine
+    container_name: dtsen_rag_redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Apple Silicon optimized Ollama service (DEFAULT for Mac M2/M3/M4)
+  ollama:
+    image: ollama/ollama:latest
+    container_name: dtsen_rag_ollama_apple
+    platform: linux/arm64
+    ports:
+      - "11434:11434"
+    restart: unless-stopped
+    # Apple Silicon M2/M3/M4 Pro optimizations
+    environment:
+      - OLLAMA_HOST=0.0.0.0
+      - OLLAMA_NUM_PARALLEL=4  # Optimized for Apple Silicon multi-core
+      - OLLAMA_MAX_LOADED_MODELS=2
+      - OLLAMA_KEEP_ALIVE=5m  # Efficient memory management for unified memory
+      - OLLAMA_MAX_QUEUE=10
+      - OLLAMA_FLASH_ATTENTION=0  # Disabled for ARM compatibility
+    volumes:
+      - ollama_data:/root/.ollama
+    # healthcheck:
+    #   test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+    #   interval: 30s
+    #   timeout: 10s
+    #   retries: 3
+    #   start_period: 60s  # Allow time for model downloads
+
+  # NVIDIA GPU optimized Ollama service (for systems with NVIDIA GPUs)
+  ollama-nvidia:
+    image: ollama/ollama:latest
+    container_name: dtsen_rag_ollama_nvidia
+    platform: linux/amd64
+    ports:
+      - "11434:11434"
+    restart: unless-stopped
+    # NVIDIA GPU optimizations
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - OLLAMA_HOST=0.0.0.0
+      - OLLAMA_NUM_PARALLEL=8  # Higher for GPU acceleration
+      - OLLAMA_MAX_LOADED_MODELS=3  # Can handle more models with GPU
+      - OLLAMA_KEEP_ALIVE=10m  # Longer keep-alive for GPU efficiency
+      - OLLAMA_MAX_QUEUE=20
+      - OLLAMA_FLASH_ATTENTION=1  # Enable for NVIDIA GPUs
+    volumes:
+      - ollama_data_nvidia:/root/.ollama
+    # healthcheck:
+    #   test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+    #   interval: 30s
+    #   timeout: 10s
+    #   retries: 3
+    #   start_period: 60s
+    profiles:
+      - nvidia-gpu
+
+  chatbot:
+    build: ./app
+    container_name: dtsen_rag_chatbot
+    platform: linux/arm64  # Optimized for Apple Silicon
+    # Apple Silicon M2 Pro optimizations
+    deploy:
+      resources:
+        limits:
+          memory: 4G  # Reasonable limit for unified memory
+          cpus: '6.0'  # Utilize M2 Pro efficiently
+    environment:
+      # Apple Silicon optimized configuration
+      # Database Configuration
+      - DATABASE_URL=postgresql://rag_user:rag_pass@postgres:5432/rag_db
+      - DB_POOL_SIZE=10
+      - DB_MAX_OVERFLOW=20
+      - DB_POOL_TIMEOUT=30
+      
+      # Vector Store Configuration
+      - COLLECTION_NAME=data_rag_kb
+      - VECTOR_DIMENSION=384
+      
+      # LLM Configuration
+      - OLLAMA_API=http://ollama:11434
+      - LLM_MODEL=gemma2:2b
+      - LLM_FALLBACK_MODEL=llama3
+      - LLM_TEMPERATURE=0.1
+      - LLM_MAX_TOKENS=512
+      - LLM_TIMEOUT=60
+      
+      # Embedding Configuration (Apple Silicon optimized)
+      - EMBEDDING_MODEL=sentence-transformers/all-MiniLM-L6-v2
+      - EMBEDDING_FALLBACK_MODEL=sentence-transformers/all-MiniLM-L6-v2
+      - EMBEDDING_DEVICE=cpu
+      - GPU_ENABLED=false
+      - EMBEDDING_BATCH_SIZE=32  # Increased for M2 Pro unified memory
+      - PYTORCH_MPS_HIGH_WATERMARK_RATIO=0.8  # Apple Silicon MPS optimization
+      - OMP_NUM_THREADS=8  # Optimized for M2 Pro P-cores
+      
+      # Document Processing
+      - MAX_CHUNK_SIZE=512
+      - CHUNK_OVERLAP=50
+      - MAX_FILE_SIZE_MB=100
+      # - SUPPORTED_EXTENSIONS=.txt,.md,.pdf,.docx,.html  # Using default from config
+      
+      # Web Crawling (crawl4ai)
+      - CRAWL_RATE_LIMIT=1.0
+      - CRAWL_TIMEOUT=30
+      - CRAWL_MAX_PAGES=100
+      - CRAWL_USER_AGENT=RAG-Crawler/1.0
+      - CRAWL_RESPECT_ROBOTS=true
+      - CRAWL_MAX_DEPTH=3
+      
+      # API Configuration
+      - API_HOST=0.0.0.0
+      - API_PORT=8000
+      - API_RELOAD=false
+      - API_LOG_LEVEL=info
+      - CORS_ORIGINS=*
+      
+      # Redis Configuration
+      - REDIS_URL=redis://redis:6379/0
+      - REDIS_CACHE_TTL=3600
+      - REDIS_MAX_CONNECTIONS=10
+      
+      # Task Queue Configuration
+      - CELERY_BROKER_URL=redis://redis:6379/1
+      - CELERY_RESULT_BACKEND=redis://redis:6379/2
+      - TASK_QUEUE_ENABLED=true
+      
+      # Performance Settings (Apple Silicon M2 Pro optimized)
+      - ENABLE_CACHING=true
+      - BATCH_PROCESSING=true
+      - ASYNC_PROCESSING=true
+      - MAX_CONCURRENT_REQUESTS=8  # Optimized for M2 Pro cores
+      - REQUEST_TIMEOUT=300
+      - API_WORKERS=2  # Multiple workers for M2 Pro
+      
+      # Logging Configuration
+      - LOG_LEVEL=INFO
+      - LOG_FORMAT=%(asctime)s - %(name)s - %(levelname)s - %(message)s
+      
+      # Health Check Configuration
+      - HEALTH_CHECK_INTERVAL=30
+      - HEALTH_CHECK_TIMEOUT=5
+      
+      # Data Source Configuration
+      - DATA_DIR=/app/data
+      - BACKUP_DIR=/app/backups
+      - TEMP_DIR=/tmp/rag
+      
+      # API Integration Settings
+      - API_REQUEST_TIMEOUT=30
+      - API_MAX_RETRIES=3
+      - API_RETRY_DELAY=1
+      
+      # MCP Settings (enabled for testing with JSONPlaceholder)
+      - MCP_ENABLED=true
+      - MCP_SERVER_URL=https://jsonplaceholder.typicode.com
+      # - MCP_API_KEY=your_mcp_api_key
+      
+      # Database Query Settings (enabled for testing)
+      - DB_QUERY_ENABLED=true
+      - DB_QUERY_URL=postgresql://rag_user:rag_pass@postgres:5432/rag_db
+      - DB_QUERY_TIMEOUT=30
+      - DB_QUERY_MAX_ROWS=1000
+      
+      # Security Settings
+      - RATE_LIMIT_ENABLED=true
+      - RATE_LIMIT_REQUESTS=100
+      - RATE_LIMIT_WINDOW=3600
+      
+      # Swagger UI Configuration
+      - SWAGGER_UI_ENABLED=true
+      - SWAGGER_UI_PATH=/docs
+      - REDOC_PATH=/redoc
+      - OPENAPI_JSON_PATH=/openapi.json
+      - SWAGGER_UI_TITLE=RAG Chatbot API Documentation
+      - SWAGGER_UI_DESCRIPTION=Comprehensive API documentation for the Multi-source RAG Chatbot
+      - API_CONTACT_NAME=RAG Chatbot Team
+      - API_CONTACT_EMAIL=support@rag-chatbot.com
+      - API_LICENSE_NAME=MIT
+      - API_LICENSE_URL=https://opensource.org/licenses/MIT
+      
+      # System Prompt Configuration
+      - SYSTEM_PROMPT_ENABLED=true
+      - SYSTEM_PROMPT_DEFAULT=You are a helpful AI assistant specializing in Retrieval-Augmented Generation (RAG). Your role is to provide accurate, informative responses based on the provided context from indexed documents.
+      - SYSTEM_PROMPT_MAX_LENGTH=2000
+      - SYSTEM_PROMPT_OVERRIDE_ALLOWED=true
+      - SYSTEM_PROMPT_TEMPLATE_ENABLED=true
+    
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      # ollama:
+      #   condition: service_healthy
+    volumes:
+      - ./app:/app
+      - ./data:/app/data
+      - ./backups:/app/backups
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+
+  # NVIDIA GPU optimized chatbot service
+  chatbot-nvidia:
+    build: ./app
+    container_name: dtsen_rag_chatbot_nvidia
+    platform: linux/amd64
+    # NVIDIA GPU optimizations
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+        limits:
+          memory: 8G  # Higher memory for GPU workloads
+          cpus: '8.0'  # More CPU cores for GPU systems
+    environment:
+      # NVIDIA GPU Configuration
+      - NVIDIA_VISIBLE_DEVICES=all
+      - GPU_ENABLED=true
+      - CUDA_VISIBLE_DEVICES=all
+      
+      # Database Configuration
+      - DATABASE_URL=postgresql://rag_user:rag_pass@postgres:5432/rag_db
+      - DB_POOL_SIZE=15
+      - DB_MAX_OVERFLOW=30
+      - DB_POOL_TIMEOUT=30
+      
+      # Vector Store Configuration
+      - COLLECTION_NAME=data_rag_kb
+      - VECTOR_DIMENSION=384
+      
+      # LLM Configuration
+      - OLLAMA_API=http://ollama-nvidia:11434
+      - LLM_MODEL=gemma2:2b
+      - LLM_FALLBACK_MODEL=llama3
+      - LLM_TEMPERATURE=0.1
+      - LLM_MAX_TOKENS=512
+      - LLM_TIMEOUT=60
+      
+      # Embedding Configuration (GPU optimized)
+      - EMBEDDING_MODEL=sentence-transformers/all-MiniLM-L6-v2
+      - EMBEDDING_FALLBACK_MODEL=sentence-transformers/all-MiniLM-L6-v2
+      - EMBEDDING_DEVICE=cuda
+      - EMBEDDING_BATCH_SIZE=64  # Higher batch size for GPU
+      - PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:512
+      
+      # Performance Settings (GPU optimized)
+      - ENABLE_CACHING=true
+      - BATCH_PROCESSING=true
+      - ASYNC_PROCESSING=true
+      - MAX_CONCURRENT_REQUESTS=16  # Higher for GPU acceleration
+      - REQUEST_TIMEOUT=300
+      - API_WORKERS=4  # More workers for GPU systems
+      
+      # API Configuration
+      - API_HOST=0.0.0.0
+      - API_PORT=8000
+      - API_RELOAD=false
+      - API_LOG_LEVEL=info
+      - CORS_ORIGINS=*
+      
+      # Redis Configuration
+      - REDIS_URL=redis://redis:6379/0
+      - REDIS_CACHE_TTL=3600
+      - REDIS_MAX_CONNECTIONS=15
+      
+      # Other settings
+      - LOG_LEVEL=INFO
+      - SWAGGER_UI_ENABLED=true
+      - SYSTEM_PROMPT_ENABLED=true
+    
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      # ollama-nvidia:
+      #   condition: service_healthy
+    volumes:
+      - ./app:/app
+      - ./data:/app/data
+      - ./backups:/app/backups
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+    profiles:
+      - nvidia-gpu
+
+  # Optional: Celery worker for background tasks
+  celery-worker:
+    build: ./app
+    container_name: dtsen_rag_celery_worker
+    command: celery -A tasks.celery_app worker --loglevel=info
+    environment:
+      # Same environment as chatbot but only what's needed for worker
+      - DATABASE_URL=postgresql://rag_user:rag_pass@postgres:5432/rag_db
+      - OLLAMA_API=http://ollama:11434
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/1
+      - CELERY_RESULT_BACKEND=redis://redis:6379/2
+      - ENABLE_CACHING=true
+      - LOG_LEVEL=INFO
+      - DATA_DIR=/app/data
+      - EMBEDDING_MODEL=sentence-transformers/all-MiniLM-L6-v2
+      - EMBEDDING_DEVICE=cpu
+      - MAX_CHUNK_SIZE=512
+      - CHUNK_OVERLAP=50
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped
+    profiles:
+      - with-celery
+
+volumes:
+  pg_data:
+  redis_data:
+  ollama_data:        # Apple Silicon default
+  ollama_data_nvidia: # NVIDIA GPU specific
+  ollama_data_cpu:    # CPU-only fallback
+
+# ==============================================================================
+# RAG CHATBOT - 3 DEPLOYMENT PROFILES
+# ==============================================================================
+#
+# 1. APPLE SILICON (DEFAULT) - For Mac M2/M3/M4 Pro/Max/Ultra
+#    Usage: docker-compose up -d
+#    Features: ARM64 optimized, unified memory management, Apple Silicon specific tuning
+#    Services: ollama + chatbot (both optimized for Apple Silicon)
+#
+# 2. NVIDIA GPU - For systems with NVIDIA GPUs and Docker GPU support
+#    Usage: docker-compose --profile nvidia-gpu up -d  
+#    Features: CUDA acceleration, higher memory/CPU limits, GPU-optimized embeddings
+#    Services: ollama-nvidia + chatbot-nvidia (both GPU accelerated)
+#    Requirements: NVIDIA Docker runtime, compatible GPU
+#
+# 3. CPU-ONLY (FALLBACK) - For any system without GPU acceleration
+#    Usage: docker-compose --profile cpu-only up -d
+#    Features: Conservative resource usage, maximum compatibility, CPU-only processing
+#    Services: ollama-cpu + chatbot-cpu (both CPU optimized)
+#    Best for: VMs, older hardware, development environments
+#
+# Background processing with Celery (optional for any profile):
+#   docker-compose --profile with-celery up -d
+# ==============================================================================
+
+# CPU-only versions of services
+---
+version: '3.8'
+
+services:
+  # CPU-only Ollama service (fallback for any system without GPU)
+  ollama-cpu:
+    image: ollama/ollama:latest
+    container_name: dtsen_rag_ollama_cpu
+    ports:
+      - "11434:11434"
+    restart: unless-stopped
+    # Conservative CPU-only configuration for maximum compatibility
+    deploy:
+      resources:
+        limits:
+          memory: 2G  # Conservative memory limit
+          cpus: '2.0'  # Conservative CPU allocation
+    environment:
+      - OLLAMA_HOST=0.0.0.0
+      - OLLAMA_NUM_PARALLEL=1  # Conservative for CPU-only
+      - OLLAMA_MAX_LOADED_MODELS=1  # Single model for memory efficiency
+      - OLLAMA_KEEP_ALIVE=2m  # Shorter keep-alive to free memory
+      - OLLAMA_MAX_QUEUE=5
+      - OLLAMA_FLASH_ATTENTION=0  # Disabled for CPU compatibility
+    volumes:
+      - ollama_data_cpu:/root/.ollama
+    # healthcheck:
+    #   test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+    #   interval: 45s
+    #   timeout: 15s
+    #   retries: 3
+    #   start_period: 90s  # More time for CPU-only startup
+    profiles:
+      - cpu-only
+
+  # CPU-only chatbot service
+  chatbot-cpu:
+    build: ./app
+    container_name: dtsen_rag_chatbot_cpu
+    environment:
+      # Force CPU-only configuration
+      - EMBEDDING_DEVICE=cpu
+      - GPU_ENABLED=false
+      - MIXED_PRECISION=false
+      - CPU_WORKERS=4
+      
+      # Database Configuration
+      - DATABASE_URL=postgresql://rag_user:rag_pass@postgres:5432/rag_db
+      - DB_POOL_SIZE=10
+      - DB_MAX_OVERFLOW=20
+      - DB_POOL_TIMEOUT=30
+      
+      # Vector Store Configuration
+      - COLLECTION_NAME=data_rag_kb
+      - VECTOR_DIMENSION=384
+      
+      # LLM Configuration  
+      - OLLAMA_API=http://ollama-cpu:11434
+      - LLM_MODEL=gemma2:2b
+      - LLM_FALLBACK_MODEL=llama3
+      - LLM_TEMPERATURE=0.1
+      - LLM_MAX_TOKENS=512
+      - LLM_TIMEOUT=60
+      
+      # Embedding Configuration
+      - EMBEDDING_MODEL=sentence-transformers/all-MiniLM-L6-v2
+      - EMBEDDING_FALLBACK_MODEL=sentence-transformers/all-MiniLM-L6-v2
+      - EMBEDDING_BATCH_SIZE=16
+      
+      # Performance Settings (optimized for CPU)
+      - ENABLE_CACHING=true
+      - BATCH_PROCESSING=true
+      - ASYNC_PROCESSING=true
+      - MAX_CONCURRENT_REQUESTS=4
+      - REQUEST_TIMEOUT=300
+      
+      # All other settings remain the same as GPU version...
+      - API_HOST=0.0.0.0
+      - API_PORT=8000
+      - REDIS_URL=redis://redis:6379/0
+      - SWAGGER_UI_ENABLED=true
+      - SYSTEM_PROMPT_ENABLED=true
+    
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      # ollama-cpu:
+      #   condition: service_healthy
+    volumes:
+      - ./data:/app/data
+      - ./backups:/app/backups
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+    profiles:
+      - cpu-only
