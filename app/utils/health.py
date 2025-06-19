@@ -209,7 +209,7 @@ class HealthChecker:
                 dimension_check = None
                 if vector_count['count'] > 0:
                     dimension_check = await connection.fetchrow(
-                        f"SELECT array_length(embedding, 1) as dimension FROM {self.settings.COLLECTION_NAME} LIMIT 1"
+                        f"SELECT vector_dims(embedding) as dimension FROM {self.settings.COLLECTION_NAME} LIMIT 1"
                     )
                 
                 await connection.close()

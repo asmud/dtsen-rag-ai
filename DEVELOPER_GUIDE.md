@@ -290,7 +290,7 @@ Pydantic data models:
 ### 1. Environment Setup
 ```bash
 # Copy and configure environment variables
-cp .env.example .env
+cp .env.apple-silicon .env  # Choose appropriate profile
 # Edit .env file with your specific values
 
 # Start the application stack

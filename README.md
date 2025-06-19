@@ -80,7 +80,7 @@ git clone https://github.com/yourusername/dtsen-rag-ai.git
 cd dtsen-rag-ai
 
 # Copy and configure environment variables
-cp .env.example .env
+cp .env.apple-silicon .env  # or .env.nvidia-gpu or .env.cpu-only
 # Edit .env file with your specific settings
 ```
 
@@ -405,7 +405,7 @@ SWAGGER_UI_ENABLED=true                # Enable Swagger UI (verified working)
 SWAGGER_UI_PATH=/docs                  # Swagger UI endpoint
 ```
 
-See `.env.example` for complete configuration options.
+See `.env.apple-silicon`, `.env.nvidia-gpu`, or `.env.cpu-only` for complete configuration options.
 
 ## 🔧 Development
 
@@ -429,7 +429,9 @@ dtsen-rag-ai/
 │   │   └── embeddings.py       # Embedding management
 │   └── models/                 # Pydantic schemas
 ├── docker-compose.yml          # Service orchestration
-├── .env.example               # Configuration template
+├── .env.apple-silicon         # Apple Silicon configuration
+├── .env.nvidia-gpu            # NVIDIA GPU configuration  
+├── .env.cpu-only              # CPU-only configuration
 └── DEVELOPER_GUIDE.md          # Development guidance and commands
 ```
 

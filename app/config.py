@@ -6,7 +6,7 @@ import logging
 
 class Settings(BaseSettings):
     # Database Configuration
-    DATABASE_URL: str = "postgresql+psycopg://rag_user:rag_pass@postgres:5432/rag_db"
+    DATABASE_URL: str = "postgresql://rag_user:rag_pass@postgres:5432/rag_db"
     DB_POOL_SIZE: int = 10
     DB_MAX_OVERFLOW: int = 20
     DB_POOL_TIMEOUT: int = 30
@@ -31,11 +31,11 @@ class Settings(BaseSettings):
     EMBEDDING_BATCH_SIZE_GPU: int = 64  # Larger batch size for GPU
     
     # GPU Resource Management
-    GPU_ENABLED: bool = True  # Enable GPU detection and usage
+    GPU_ENABLED: bool = False  # Enable GPU detection and usage
     GPU_DEVICE_ID: Optional[int] = None  # Specific GPU device (None = auto)
     GPU_MEMORY_FRACTION: float = 0.8  # Fraction of GPU memory to use
     CPU_WORKERS: int = 4  # Number of CPU workers for parallel processing
-    MIXED_PRECISION: bool = True  # Use mixed precision for GPU operations
+    MIXED_PRECISION: bool = False  # Use mixed precision for GPU operations
     
     # Document Processing
     MAX_CHUNK_SIZE: int = 512
@@ -96,13 +96,13 @@ class Settings(BaseSettings):
     API_RETRY_DELAY: int = 1
     
     # MCP (Model Context Protocol) Settings
-    MCP_ENABLED: bool = False
-    MCP_SERVER_URL: Optional[str] = None
+    MCP_ENABLED: bool = True
+    MCP_SERVER_URL: Optional[str] = "https://jsonplaceholder.typicode.com"
     MCP_API_KEY: Optional[str] = None
     
     # Database Query Settings
-    DB_QUERY_ENABLED: bool = False
-    DB_QUERY_URL: Optional[str] = None
+    DB_QUERY_ENABLED: bool = True
+    DB_QUERY_URL: Optional[str] = "postgresql://rag_user:rag_pass@postgres:5432/rag_db"
     DB_QUERY_TIMEOUT: int = 30
     DB_QUERY_MAX_ROWS: int = 1000
     

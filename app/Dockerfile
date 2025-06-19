@@ -1,4 +1,4 @@
-FROM python:3.10-slim
+FROM asmud/chatbot:base
 
 WORKDIR /app
 

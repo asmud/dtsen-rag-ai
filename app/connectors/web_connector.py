@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 from typing import List, Dict, Any, Optional
 from datetime import datetime
 from urllib.parse import urljoin, urlparse
@@ -221,14 +222,8 @@ class WebConnector(BaseConnector):
     async def health_check(self) -> Dict[str, Any]:
         """Check health of web crawler"""
         try:
-            if not self._connected:
-                return {
-                    "status": "unhealthy",
-                    "message": "Web crawler not connected"
-                }
-            
-            # Test crawling a simple page
-            test_url = "https://httpbin.org/html"
+            my_port = os.getenv('API_PORT', '8000')
+            test_url = f"http://localhost:{my_port}"
             result = await self.crawler.arun(url=test_url, timeout=10)
             
             if result.success:

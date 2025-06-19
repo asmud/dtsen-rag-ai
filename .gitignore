@@ -169,6 +169,11 @@ redis_data/
 app/logs/
 app/temp/
 
+# Runtime directories (empty, created at runtime)
+app/data/
+app/backups/
+app/storage/
+
 # Configuration overrides
 docker-compose.override.yml
 .env.local
