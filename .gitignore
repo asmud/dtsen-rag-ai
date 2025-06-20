@@ -213,3 +213,6 @@ app/storage/*.json
 app/storage/*.db
 app/storage/*.sqlite
 !app/storage/.gitkeep
+
+# Exclude development documentation
+CLAUDE.md

@@ -1,3 +1,27 @@
+# ==============================================================================
+# RAG CHATBOT - 3 DEPLOYMENT PROFILES
+# ==============================================================================
+#
+# 1. APPLE SILICON (DEFAULT) - For Mac M2/M3/M4 Pro/Max/Ultra
+#    Usage: docker-compose up -d
+#    Features: ARM64 optimized, unified memory management, Apple Silicon specific tuning
+#    Services: ollama + chatbot (both optimized for Apple Silicon)
+#
+# 2. NVIDIA GPU - For systems with NVIDIA GPUs and Docker GPU support
+#    Usage: docker-compose --profile nvidia-gpu up -d  
+#    Features: CUDA acceleration, higher memory/CPU limits, GPU-optimized embeddings
+#    Services: ollama-nvidia + chatbot-nvidia (both GPU accelerated)
+#    Requirements: NVIDIA Docker runtime, compatible GPU
+#
+# 3. CPU-ONLY (FALLBACK) - For any system without GPU acceleration
+#    Usage: docker-compose --profile cpu-only up -d
+#    Features: Conservative resource usage, maximum compatibility, CPU-only processing
+#    Services: ollama-cpu + chatbot-cpu (both CPU optimized)
+#    Best for: VMs, older hardware, development environments
+#
+# Background processing with Celery (optional for any profile):
+#   docker-compose --profile with-celery up -d
+# ==============================================================================
 version: '3.8'
 
 services:
@@ -34,13 +58,12 @@ services:
 
   # Apple Silicon optimized Ollama service (DEFAULT for Mac M2/M3/M4)
   ollama:
-    image: ollama/ollama:latest
+    image: asmud/ollama:latest-arm64
     container_name: dtsen_rag_ollama_apple
-    platform: linux/arm64
+    #platform: linux/arm64
     ports:
       - "11434:11434"
     restart: unless-stopped
-    # Apple Silicon M2/M3/M4 Pro optimizations
     environment:
       - OLLAMA_HOST=0.0.0.0
       - OLLAMA_NUM_PARALLEL=4  # Optimized for Apple Silicon multi-core
@@ -50,53 +73,18 @@ services:
       - OLLAMA_FLASH_ATTENTION=0  # Disabled for ARM compatibility
     volumes:
       - ollama_data:/root/.ollama
-    # healthcheck:
-    #   test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
-    #   interval: 30s
-    #   timeout: 10s
-    #   retries: 3
-    #   start_period: 60s  # Allow time for model downloads
+    healthcheck:
+      test: ["CMD", "nc", "-zv", "localhost", "11434"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 120s  # Allow time for model downloads
 
-  # NVIDIA GPU optimized Ollama service (for systems with NVIDIA GPUs)
-  ollama-nvidia:
-    image: ollama/ollama:latest
-    container_name: dtsen_rag_ollama_nvidia
-    platform: linux/amd64
-    ports:
-      - "11434:11434"
-    restart: unless-stopped
-    # NVIDIA GPU optimizations
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
-    environment:
-      - NVIDIA_VISIBLE_DEVICES=all
-      - OLLAMA_HOST=0.0.0.0
-      - OLLAMA_NUM_PARALLEL=8  # Higher for GPU acceleration
-      - OLLAMA_MAX_LOADED_MODELS=3  # Can handle more models with GPU
-      - OLLAMA_KEEP_ALIVE=10m  # Longer keep-alive for GPU efficiency
-      - OLLAMA_MAX_QUEUE=20
-      - OLLAMA_FLASH_ATTENTION=1  # Enable for NVIDIA GPUs
-    volumes:
-      - ollama_data_nvidia:/root/.ollama
-    # healthcheck:
-    #   test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
-    #   interval: 30s
-    #   timeout: 10s
-    #   retries: 3
-    #   start_period: 60s
-    profiles:
-      - nvidia-gpu
-
+  # Apple Silicon M2 Pro optimizations
   chatbot:
     build: ./app
     container_name: dtsen_rag_chatbot
     platform: linux/arm64  # Optimized for Apple Silicon
-    # Apple Silicon M2 Pro optimizations
     deploy:
       resources:
         limits:
@@ -116,8 +104,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-      # ollama:
-      #   condition: service_healthy
+      ollama:
+        condition: service_healthy
     volumes:
       - ./app:/app
       - ./data:/app/data
@@ -127,14 +115,48 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
+      start_period: 120s #allow embed model to load
     restart: unless-stopped
+
+  # NVIDIA GPU optimized Ollama service (for systems with NVIDIA GPUs)
+  ollama-nvidia:
+    image: asmud/ollama:latest
+    container_name: dtsen_rag_ollama_nvidia
+    platform: linux/amd64
+    ports:
+      - "11434:11434"
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - OLLAMA_HOST=0.0.0.0
+      - OLLAMA_NUM_PARALLEL=8  # Higher for GPU acceleration
+      - OLLAMA_MAX_LOADED_MODELS=3  # Can handle more models with GPU
+      - OLLAMA_KEEP_ALIVE=10m  # Longer keep-alive for GPU efficiency
+      - OLLAMA_MAX_QUEUE=20
+      - OLLAMA_FLASH_ATTENTION=1  # Enable for NVIDIA GPUs
+    volumes:
+      - ollama_data_nvidia:/root/.ollama
+    healthcheck:
+      test: ["CMD", "nc", "-zv", "localhost", "11434"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
+    profiles:
+      - nvidia-gpu
 
   # NVIDIA GPU optimized chatbot service
   chatbot-nvidia:
     build: ./app
     container_name: dtsen_rag_chatbot_nvidia
     platform: linux/amd64
-    # NVIDIA GPU optimizations
     deploy:
       resources:
         reservations:
@@ -160,8 +182,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-      # ollama-nvidia:
-      #   condition: service_healthy
+      ollama-nvidia:
+        condition: service_healthy
     volumes:
       - ./app:/app
       - ./data:/app/data
@@ -171,9 +193,71 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
+      start_period: 120s #allow embed model to load
     restart: unless-stopped
     profiles:
       - nvidia-gpu
+
+  # CPU-only Ollama service (fallback for any system without GPU)
+  ollama-cpu:
+    image: asmud/ollama:latest
+    container_name: dtsen_rag_ollama_cpu
+    ports:
+      - "11434:11434"
+    restart: unless-stopped
+    # Conservative CPU-only configuration for maximum compatibility
+    deploy:
+      resources:
+        limits:
+          memory: 2G  # Conservative memory limit
+          cpus: '2.0'  # Conservative CPU allocation
+    environment:
+      - OLLAMA_HOST=0.0.0.0
+      - OLLAMA_NUM_PARALLEL=1  # Conservative for CPU-only
+      - OLLAMA_MAX_LOADED_MODELS=1  # Single model for memory efficiency
+      - OLLAMA_KEEP_ALIVE=2m  # Shorter keep-alive to free memory
+      - OLLAMA_MAX_QUEUE=5
+      - OLLAMA_FLASH_ATTENTION=0  # Disabled for CPU compatibility
+    volumes:
+      - ollama_data_cpu:/root/.ollama
+    healthcheck:
+      test: ["CMD", "nc", "-zv", "localhost", "11434"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 150s
+    profiles:
+      - cpu-only
+
+  # CPU-only chatbot service
+  chatbot-cpu:
+    build: ./app
+    container_name: dtsen_rag_chatbot_cpu
+    env_file:
+      - .env.cpu-only
+    environment:
+      # Override specific settings for CPU-only deployment
+      - CPU_WORKERS=4
+    
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./data:/app/data
+      - ./backups:/app/backups
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 120s #allow model to load
+    restart: unless-stopped
+    profiles:
+      - cpu-only
 
   # Optional: Celery worker for background tasks
   celery-worker:
@@ -211,83 +295,3 @@ volumes:
   ollama_data:        # Apple Silicon default
   ollama_data_nvidia: # NVIDIA GPU specific
   ollama_data_cpu:    # CPU-only fallback
-
-# ==============================================================================
-# RAG CHATBOT - 3 DEPLOYMENT PROFILES
-# ==============================================================================
-#
-# 1. APPLE SILICON (DEFAULT) - For Mac M2/M3/M4 Pro/Max/Ultra
-#    Usage: docker-compose up -d
-#    Features: ARM64 optimized, unified memory management, Apple Silicon specific tuning
-#    Services: ollama + chatbot (both optimized for Apple Silicon)
-#
-# 2. NVIDIA GPU - For systems with NVIDIA GPUs and Docker GPU support
-#    Usage: docker-compose --profile nvidia-gpu up -d  
-#    Features: CUDA acceleration, higher memory/CPU limits, GPU-optimized embeddings
-#    Services: ollama-nvidia + chatbot-nvidia (both GPU accelerated)
-#    Requirements: NVIDIA Docker runtime, compatible GPU
-#
-# 3. CPU-ONLY (FALLBACK) - For any system without GPU acceleration
-#    Usage: docker-compose --profile cpu-only up -d
-#    Features: Conservative resource usage, maximum compatibility, CPU-only processing
-#    Services: ollama-cpu + chatbot-cpu (both CPU optimized)
-#    Best for: VMs, older hardware, development environments
-#
-# Background processing with Celery (optional for any profile):
-#   docker-compose --profile with-celery up -d
-# ==============================================================================
-
-  # CPU-only Ollama service (fallback for any system without GPU)
-  ollama-cpu:
-    image: ollama/ollama:latest
-    container_name: dtsen_rag_ollama_cpu
-    ports:
-      - "11434:11434"
-    restart: unless-stopped
-    # Conservative CPU-only configuration for maximum compatibility
-    deploy:
-      resources:
-        limits:
-          memory: 2G  # Conservative memory limit
-          cpus: '2.0'  # Conservative CPU allocation
-    environment:
-      - OLLAMA_HOST=0.0.0.0
-      - OLLAMA_NUM_PARALLEL=1  # Conservative for CPU-only
-      - OLLAMA_MAX_LOADED_MODELS=1  # Single model for memory efficiency
-      - OLLAMA_KEEP_ALIVE=2m  # Shorter keep-alive to free memory
-      - OLLAMA_MAX_QUEUE=5
-      - OLLAMA_FLASH_ATTENTION=0  # Disabled for CPU compatibility
-    volumes:
-      - ollama_data_cpu:/root/.ollama
-    profiles:
-      - cpu-only
-
-  # CPU-only chatbot service
-  chatbot-cpu:
-    build: ./app
-    container_name: dtsen_rag_chatbot_cpu
-    env_file:
-      - .env.cpu-only
-    environment:
-      # Override specific settings for CPU-only deployment
-      - CPU_WORKERS=4
-    
-    ports:
-      - "8000:8000"
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    volumes:
-      - ./data:/app/data
-      - ./backups:/app/backups
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-    restart: unless-stopped
-    profiles:
-      - cpu-only
-
