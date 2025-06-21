@@ -4,7 +4,7 @@
 
 DTSEN RAG AI is a comprehensive, production-ready RAG (Retrieval-Augmented Generation) system designed for intelligent document analysis and conversational AI. Built with performance optimization and multi-source data ingestion capabilities, it's perfect for organizations needing powerful AI-driven knowledge management.
 
-**🚀 New: One-Command Setup** - Just run `docker-compose up -d` and the system automatically detects your hardware and optimizes itself!
+**🚀 New: Simplified Setup** - Create a `.env` file, choose your platform profile, and start! The system automatically detects your hardware and optimizes itself.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
@@ -31,7 +31,7 @@ DTSEN RAG AI is a comprehensive, production-ready RAG (Retrieval-Augmented Gener
 ### ⚡ **Performance Optimized**
 - **🧠 Smart Auto-Detection** - Automatically detects and optimizes for your hardware
 - **🍎 Apple Silicon Optimized** - Native ARM64 support for M2/M3/M4 Pro/Max/Ultra
-- **🎯 Zero Configuration** - Works out of the box with one command: `docker-compose up -d`
+- **🎯 Minimal Configuration** - Just create `.env` and choose platform profile
 - **⚙️ 3-Profile Support** - Apple Silicon, NVIDIA GPU, CPU-only configurations
 - **Low Resource Design** - Verified on 4GB+ RAM environments
 - **Redis Caching** - Intelligent caching for faster responses
@@ -90,17 +90,27 @@ git clone https://github.com/asmud/dtsen-rag-ai.git
 cd dtsen-rag-ai
 ```
 
-### 2️⃣ **One-Command Start** ⭐
+### 2️⃣ **Quick Setup** ⭐
 ```bash
-# 🎯 Smart Auto-Detection (Recommended)
-docker-compose up -d
+# Create minimal environment configuration
+echo "POSTGRES_PASSWORD=rag_pass" > .env
 
-# That's it! The system automatically:
-# ✅ Detects your hardware (Apple Silicon/NVIDIA GPU/CPU-only)  
-# ✅ Optimizes settings for your system
-# ✅ Generates all required URLs and configurations
-# ✅ Starts the optimal services for your platform
+# 🎯 Smart Auto-Detection Start
+# For Apple Silicon (M1/M2/M3/M4):
+docker-compose --profile apple-silicon up -d
+
+# For NVIDIA GPU systems:
+docker-compose --profile nvidia-gpu up -d
+
+# For CPU-only systems:
+docker-compose --profile cpu-only up -d
 ```
+
+**✨ The system automatically:**
+- ✅ Detects your hardware and optimizes settings
+- ✅ Generates all required URLs and configurations  
+- ✅ Downloads LLM model on first startup (~1.6GB)
+- ✅ Starts optimal services for your platform
 
 ### ⏳ **First-Time Setup Note**
 
@@ -113,6 +123,9 @@ curl http://localhost:11434/api/tags
 
 # Monitor application startup logs
 docker-compose logs -f chatbot
+
+# Optional: Download model manually (faster startup)
+curl -X POST http://localhost:11434/api/pull -d '{"name": "gemma2:2b"}'
 
 # Once complete, check system health
 curl http://localhost:8000/health | python3 -m json.tool
@@ -127,34 +140,62 @@ docker-compose ps
 curl http://localhost:8000/health | python3 -m json.tool
 ```
 
-### 3️⃣ **Manual Profile Selection** (Optional)
-If you want to override the auto-detection:
-
-**🍎 Apple Silicon (M1/M2/M3/M4):**
-```bash
-docker-compose --profile apple-silicon up -d
-```
-
-**⚡ NVIDIA GPU (Linux/Windows):**
-```bash
-docker-compose --profile nvidia-gpu up -d
-```
-
-**💻 CPU-Only (Any System):**
-```bash
-docker-compose --profile cpu-only up -d
-```
+### 3️⃣ **Alternative Setup Methods**
 
 **🔧 Background Processing (Optional):**
 ```bash
-# Include Celery workers for heavy workloads
-docker-compose --profile with-celery up -d
+# Include Celery workers for heavy workloads with any profile
+docker-compose --profile apple-silicon --profile with-celery up -d
+docker-compose --profile nvidia-gpu --profile with-celery up -d
+docker-compose --profile cpu-only --profile with-celery up -d
 ```
 
 **Prerequisites for NVIDIA GPU Support:**
 - NVIDIA Docker runtime installed (`nvidia-docker2`)
 - NVIDIA drivers and CUDA toolkit
 - For installation: https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html
+
+## 🔧 Troubleshooting
+
+### **Common Issues & Solutions**
+
+**❌ `env file .env not found`**
+```bash
+# Solution: Create minimal .env file
+echo "POSTGRES_PASSWORD=rag_pass" > .env
+```
+
+**❌ `model 'gemma2:2b' not found (status code: 404)`**
+```bash
+# Solution: Wait for model download or download manually
+curl -X POST http://localhost:11434/api/pull -d '{"name": "gemma2:2b"}'
+
+# Check download progress
+curl http://localhost:11434/api/tags
+```
+
+**❌ `docker-compose up -d` only starts postgres/redis**
+```bash
+# Solution: Use specific profile
+docker-compose --profile apple-silicon up -d     # For Mac M1/M2/M3/M4
+docker-compose --profile nvidia-gpu up -d        # For NVIDIA GPU
+docker-compose --profile cpu-only up -d          # For CPU-only
+```
+
+**❌ Container name conflicts**
+```bash
+# Solution: Clean up existing containers
+docker-compose down
+docker rm -f $(docker ps -a | grep dtsen_rag | awk '{print $1}')
+```
+
+**❌ Application startup takes too long**
+```bash
+# Expected: First startup takes 5-10 minutes for model download
+# Monitor progress with:
+docker-compose logs -f chatbot
+curl http://localhost:11434/api/tags
+```
 
 ## 🎛️ Force & Customize Configuration
 
@@ -164,13 +205,13 @@ If you need to force specific settings or customize the configuration:
 **🎯 Quick Reference:**
 | Scenario | Command | Use Case |
 |----------|---------|----------|
-| **Auto (Recommended)** | `docker-compose up -d` | Let system detect optimal settings |
-| **Force Apple Silicon** | `docker-compose --profile apple-silicon up -d` | Override detection, use ARM64 optimizations |
-| **Force NVIDIA GPU** | `docker-compose --profile nvidia-gpu up -d` | Force GPU acceleration |
-| **Force CPU-Only** | `docker-compose --profile cpu-only up -d` | Disable GPU, maximum compatibility |
-| **Custom Settings** | Edit `.env` + `docker-compose up -d` | Override specific variables |
-| **Development** | Set `API_RELOAD=true` + `docker-compose up -d` | Live code reload |
-| **Production** | Optimize `.env` + `docker-compose up -d` | High-performance settings |
+| **Apple Silicon (Recommended)** | `docker-compose --profile apple-silicon up -d` | Mac M1/M2/M3/M4 systems |
+| **NVIDIA GPU** | `docker-compose --profile nvidia-gpu up -d` | Linux/Windows with GPU |
+| **CPU-Only** | `docker-compose --profile cpu-only up -d` | Any system, maximum compatibility |
+| **Background Tasks** | Add `--profile with-celery` | Heavy workload processing |
+| **Custom Settings** | Edit `.env` + use profile command | Override specific variables |
+| **Development** | Set `API_RELOAD=true` + use profile | Live code reload |
+| **Production** | Optimize `.env` + use profile | High-performance settings |
 
 #### **1️⃣ Force Specific Hardware Profile**
 ```bash
