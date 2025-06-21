@@ -28,11 +28,11 @@ services:
     image: pgvector/pgvector:pg16
     container_name: dtsen_rag_postgres
     environment:
-      POSTGRES_DB: rag_db
-      POSTGRES_USER: rag_user
-      POSTGRES_PASSWORD: rag_pass
+      POSTGRES_DB: ${POSTGRES_DB:-rag_db}
+      POSTGRES_USER: ${POSTGRES_USER:-rag_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-rag_pass}
     ports:
-      - "5432:5432"
+      - "${POSTGRES_PORT:-5432}:5432"
     volumes:
       - pg_data:/var/lib/postgresql/data
     healthcheck:
@@ -45,7 +45,7 @@ services:
     image: redis:7-alpine
     container_name: dtsen_rag_redis
     ports:
-      - "6379:6379"
+      - "${REDIS_PORT:-6379}:6379"
     volumes:
       - redis_data:/data
     command: redis-server --appendonly yes
@@ -61,7 +61,7 @@ services:
     container_name: dtsen_rag_ollama_apple
     platform: linux/arm64
     ports:
-      - "11434:11434"
+      - "${OLLAMA_PORT:-11434}:11434"
     restart: unless-stopped
     environment:
       - OLLAMA_HOST=0.0.0.0
@@ -92,14 +92,14 @@ services:
           memory: 4G  # Reasonable limit for unified memory
           cpus: '6.0'  # Utilize M2 Pro efficiently
     env_file:
-      - .env.apple-silicon
+      - .env
     environment:
       # Override specific settings for Apple Silicon deployment
       - PYTORCH_MPS_HIGH_WATERMARK_RATIO=0.8
       - OMP_NUM_THREADS=8
     
     ports:
-      - "8000:8000"
+      - "${API_PORT:-8000}:8000"
     depends_on:
       postgres:
         condition: service_healthy
@@ -127,7 +127,7 @@ services:
     container_name: dtsen_rag_ollama_nvidia
     platform: linux/amd64
     ports:
-      - "11434:11434"
+      - "${OLLAMA_PORT:-11434}:11434"
     restart: unless-stopped
     deploy:
       resources:
@@ -171,7 +171,7 @@ services:
           memory: 8G  # Higher memory for GPU workloads
           cpus: '8.0'  # More CPU cores for GPU systems
     env_file:
-      - .env.nvidia-gpu
+      - .env
     environment:
       # Override specific settings for NVIDIA GPU deployment
       - NVIDIA_VISIBLE_DEVICES=all
@@ -179,7 +179,7 @@ services:
       - PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:512
     
     ports:
-      - "8000:8000"
+      - "${API_PORT:-8000}:8000"
     depends_on:
       postgres:
         condition: service_healthy
@@ -201,27 +201,29 @@ services:
     profiles:
       - nvidia-gpu
 
-  # CPU-only Ollama service (fallback for any system without GPU)
+  # CPU-only Ollama service (Enhanced for x86_64 performance)
   ollama-cpu:
     image: asmud/ollama:latest
     platform: linux/amd64
     container_name: dtsen_rag_ollama_cpu
     ports:
-      - "11434:11434"
+      - "${OLLAMA_PORT:-11434}:11434"
     restart: unless-stopped
-    # Conservative CPU-only configuration for maximum compatibility
+    # Enhanced CPU-only configuration optimized for x86_64 systems
     deploy:
       resources:
         limits:
-          memory: 2G  # Conservative memory limit
-          cpus: '2.0'  # Conservative CPU allocation
+          memory: 8G  # Maximum memory allocation for better performance
+          cpus: '6.0'  # Increased CPU cores for x86_64 optimization
     environment:
       - OLLAMA_HOST=0.0.0.0
-      - OLLAMA_NUM_PARALLEL=1  # Conservative for CPU-only
-      - OLLAMA_MAX_LOADED_MODELS=1  # Single model for memory efficiency
-      - OLLAMA_KEEP_ALIVE=2m  # Shorter keep-alive to free memory
-      - OLLAMA_MAX_QUEUE=5
+      - OLLAMA_NUM_PARALLEL=4  # Increased parallelism for multi-core x86_64
+      - OLLAMA_MAX_LOADED_MODELS=1  # Focus on single model for performance
+      - OLLAMA_KEEP_ALIVE=10m  # Longer keep-alive to reduce model reloading
+      - OLLAMA_MAX_QUEUE=15  # Higher queue for better throughput
       - OLLAMA_FLASH_ATTENTION=0  # Disabled for CPU compatibility
+      - OLLAMA_MAX_VRAM=0  # Force CPU-only processing
+      - OMP_NUM_THREADS=6  # Optimize OpenMP for 6 CPU cores
     volumes:
       - ollama_data_cpu:/root/.ollama
     healthcheck:
@@ -233,19 +235,28 @@ services:
     profiles:
       - cpu-only
 
-  # CPU-only chatbot service
+  # CPU-only chatbot service (Enhanced for x86_64 performance)
   chatbot-cpu:
     build: ./app
     platform: linux/amd64
     container_name: dtsen_rag_chatbot_cpu
+    deploy:
+      resources:
+        limits:
+          memory: 8G  # Maximum memory allocation for better performance
+          cpus: '6.0'  # Increased CPU cores for x86_64 optimization
     env_file:
-      - .env.cpu-only
+      - .env
     environment:
-      # Override specific settings for CPU-only deployment
-      - CPU_WORKERS=4
+      # Enhanced settings for x86_64 CPU-only deployment
+      - CPU_WORKERS=12  # Maximized workers for better CPU utilization
+      - OMP_NUM_THREADS=6  # Optimize OpenMP threading
+      - MKL_NUM_THREADS=6  # Optimize Intel MKL if available
+      - NUMBA_NUM_THREADS=6  # Optimize Numba threading
+      - OPENBLAS_NUM_THREADS=6  # Optimize OpenBLAS threading
     
     ports:
-      - "8000:8000"
+      - "${API_PORT:-8000}:8000"
     depends_on:
       postgres:
         condition: service_healthy
@@ -271,20 +282,8 @@ services:
     build: ./app
     container_name: dtsen_rag_celery_worker
     command: celery -A tasks.celery_app worker --loglevel=info
-    environment:
-      # Same environment as chatbot but only what's needed for worker
-      - DATABASE_URL=postgresql://rag_user:rag_pass@postgres:5432/rag_db
-      - OLLAMA_API=http://ollama:11434
-      - REDIS_URL=redis://redis:6379/0
-      - CELERY_BROKER_URL=redis://redis:6379/1
-      - CELERY_RESULT_BACKEND=redis://redis:6379/2
-      - ENABLE_CACHING=true
-      - LOG_LEVEL=INFO
-      - DATA_DIR=/app/data
-      - EMBEDDING_MODEL=sentence-transformers/all-MiniLM-L6-v2
-      - EMBEDDING_DEVICE=cpu
-      - MAX_CHUNK_SIZE=512
-      - CHUNK_OVERLAP=50
+    env_file:
+      - .env
     depends_on:
       postgres:
         condition: service_healthy

@@ -4,6 +4,8 @@
 
 DTSEN RAG AI is a comprehensive, production-ready RAG (Retrieval-Augmented Generation) system designed for intelligent document analysis and conversational AI. Built with performance optimization and multi-source data ingestion capabilities, it's perfect for organizations needing powerful AI-driven knowledge management.
 
+**🚀 New: One-Command Setup** - Just run `docker-compose up -d` and the system automatically detects your hardware and optimizes itself!
+
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
 [![Docker](https://img.shields.io/badge/docker-required-blue.svg)](https://www.docker.com/)
@@ -27,8 +29,10 @@ DTSEN RAG AI is a comprehensive, production-ready RAG (Retrieval-Augmented Gener
 - **Conversation Context** - Maintains chat history and context
 
 ### ⚡ **Performance Optimized**
+- **🧠 Smart Auto-Detection** - Automatically detects and optimizes for your hardware
 - **🍎 Apple Silicon Optimized** - Native ARM64 support for M2/M3/M4 Pro/Max/Ultra
-- **🎯 3-Profile Deployment** - Apple Silicon, NVIDIA GPU, CPU-only configurations
+- **🎯 Zero Configuration** - Works out of the box with one command: `docker-compose up -d`
+- **⚙️ 3-Profile Support** - Apple Silicon, NVIDIA GPU, CPU-only configurations
 - **Low Resource Design** - Verified on 4GB+ RAM environments
 - **Redis Caching** - Intelligent caching for faster responses
 - **Async Processing** - High-performance concurrent operations
@@ -66,45 +70,62 @@ DTSEN RAG AI is a comprehensive, production-ready RAG (Retrieval-Augmented Gener
 - **⚡ NVIDIA GPU**: CUDA acceleration with higher memory/CPU limits  
 - **💻 CPU-only**: Universal compatibility for any system
 
+### 🧠 **Smart Auto-Detection** ⭐ 
+- **Hardware Detection**: Automatically identifies Apple Silicon, NVIDIA GPU, or CPU-only systems
+- **Resource Optimization**: Auto-configures CPU workers, memory usage, and batch sizes based on available hardware
+- **Zero Configuration**: No manual environment setup required - works out of the box
+- **URL Generation**: Automatically generates all database, Redis, and API connection URLs
+- **Platform Optimization**: Apple Silicon gets MPS support, NVIDIA gets CUDA, CPU-only gets conservative settings
+
 ## 🚀 Quick Start
 
 ### Prerequisites
 - Docker & Docker Compose
 - **4GB+ RAM** (verified working)
 - **10GB+ free disk space**
-- **Apple Silicon Mac** (M2/M3/M4 Pro recommended) OR x86_64 system
 
 ### 1️⃣ **Clone and Setup**
 ```bash
-git clone https://github.com/yourusername/dtsen-rag-ai.git
+git clone https://github.com/asmud/dtsen-rag-ai.git
 cd dtsen-rag-ai
-
-# Copy and configure environment variables
-cp .env.apple-silicon .env  # or .env.nvidia-gpu or .env.cpu-only
-# Edit .env file with your specific settings
 ```
 
-### 2️⃣ **Start Services**
-
-**🍎 Apple Silicon (Recommended - Default):**
+### 2️⃣ **One-Command Start** ⭐
 ```bash
-# Optimized for Mac M2/M3/M4 Pro/Max/Ultra
+# 🎯 Smart Auto-Detection (Recommended)
 docker-compose up -d
 
-# Check services are healthy
-docker-compose ps
-curl http://localhost:8000/health
+# That's it! The system automatically:
+# ✅ Detects your hardware (Apple Silicon/NVIDIA GPU/CPU-only)  
+# ✅ Optimizes settings for your system
+# ✅ Generates all required URLs and configurations
+# ✅ Starts the optimal services for your platform
 ```
 
-**⚡ NVIDIA GPU (Linux with NVIDIA GPU):**
+**🔍 Check System Health:**
 ```bash
-# For systems with NVIDIA GPU support
+# Verify all services are running
+docker-compose ps
+
+# Check auto-detected configuration and health
+curl http://localhost:8000/health | python3 -m json.tool
+```
+
+### 3️⃣ **Manual Profile Selection** (Optional)
+If you want to override the auto-detection:
+
+**🍎 Apple Silicon (M1/M2/M3/M4):**
+```bash
+docker-compose --profile apple-silicon up -d
+```
+
+**⚡ NVIDIA GPU (Linux/Windows):**
+```bash
 docker-compose --profile nvidia-gpu up -d
 ```
 
-**💻 CPU-Only (Universal Fallback):**
+**💻 CPU-Only (Any System):**
 ```bash
-# For any system without GPU acceleration
 docker-compose --profile cpu-only up -d
 ```
 
@@ -119,14 +140,144 @@ docker-compose --profile with-celery up -d
 - NVIDIA drivers and CUDA toolkit
 - For installation: https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html
 
-### 3️⃣ **Access the System**
+## 🎛️ Force & Customize Configuration
+
+### **Override Auto-Detection**
+If you need to force specific settings or customize the configuration:
+
+**🎯 Quick Reference:**
+| Scenario | Command | Use Case |
+|----------|---------|----------|
+| **Auto (Recommended)** | `docker-compose up -d` | Let system detect optimal settings |
+| **Force Apple Silicon** | `docker-compose --profile apple-silicon up -d` | Override detection, use ARM64 optimizations |
+| **Force NVIDIA GPU** | `docker-compose --profile nvidia-gpu up -d` | Force GPU acceleration |
+| **Force CPU-Only** | `docker-compose --profile cpu-only up -d` | Disable GPU, maximum compatibility |
+| **Custom Settings** | Edit `.env` + `docker-compose up -d` | Override specific variables |
+| **Development** | Set `API_RELOAD=true` + `docker-compose up -d` | Live code reload |
+| **Production** | Optimize `.env` + `docker-compose up -d` | High-performance settings |
+
+#### **1️⃣ Force Specific Hardware Profile**
+```bash
+# Force Apple Silicon profile (even on other systems)
+docker-compose --profile apple-silicon up -d
+
+# Force NVIDIA GPU profile (requires GPU support)
+docker-compose --profile nvidia-gpu up -d
+
+# Force CPU-only profile (universal compatibility)
+docker-compose --profile cpu-only up -d
+
+# Combine with background processing
+docker-compose --profile apple-silicon --profile with-celery up -d
+```
+
+#### **2️⃣ Custom Environment Variables**
+Create or edit `.env` file to override auto-detected settings:
+```bash
+# Copy template to customize
+cp .env.template .env
+
+# Edit key settings
+nano .env  # or use your preferred editor
+```
+
+**Common Customizations:**
+```bash
+# Force specific resource allocation
+CPU_WORKERS=8
+MAX_CONCURRENT_REQUESTS=16
+EMBEDDING_BATCH_SIZE=64
+
+# Force GPU settings
+GPU_ENABLED=true
+EMBEDDING_DEVICE=cuda
+MIXED_PRECISION=true
+
+# Custom service endpoints
+POSTGRES_HOST=custom-db-host
+REDIS_HOST=custom-redis-host
+OLLAMA_HOST=custom-ollama-host
+
+# Performance tuning
+REQUEST_TIMEOUT=300
+LLM_TIMEOUT=180
+REDIS_CACHE_TTL=7200
+
+# Security settings
+RATE_LIMIT_REQUESTS=200
+RATE_LIMIT_WINDOW=3600
+```
+
+#### **3️⃣ Custom Docker Compose Override**
+For advanced customizations, create `docker-compose.override.yml`:
+```yaml
+version: '3.8'
+services:
+  chatbot:
+    environment:
+      - CUSTOM_SETTING=value
+    volumes:
+      - ./custom-data:/app/custom-data
+  
+  postgres:
+    environment:
+      - POSTGRES_SHARED_PRELOAD_LIBRARIES=pg_stat_statements
+```
+
+#### **4️⃣ Development Mode**
+```bash
+# Development with live reload
+API_RELOAD=true
+LOG_LEVEL=DEBUG
+docker-compose up -d
+
+# Mount source code for development
+docker-compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+```
+
+#### **5️⃣ Production Optimizations**
+```bash
+# Production environment variables
+ENVIRONMENT=production
+LOG_LEVEL=INFO
+ENABLE_CACHING=true
+RATE_LIMIT_ENABLED=true
+
+# High-performance settings
+MAX_CONCURRENT_REQUESTS=32
+EMBEDDING_BATCH_SIZE=128
+DB_POOL_SIZE=20
+```
+
+#### **6️⃣ Validate Custom Configuration**
+```bash
+# Test your custom configuration
+python3 validate_env.py --env-file .env
+
+# Check what hardware profile would be detected
+python3 -c "
+import sys; sys.path.append('app')
+from config import Settings
+s = Settings()
+s.auto_detect_hardware()
+print('Profile:', s.DEPLOYMENT_PROFILE)
+print('CPU Workers:', s.CPU_WORKERS)
+print('GPU Enabled:', s.GPU_ENABLED)
+print('Batch Size:', s.EMBEDDING_BATCH_SIZE)
+"
+
+# View complete configuration
+curl -s http://localhost:8000/health | python3 -m json.tool
+```
+
+### 7️⃣ **Access the System**
 - **API Documentation**: http://localhost:8000/docs (Interactive Swagger UI)
 - **Alternative Docs**: http://localhost:8000/redoc (ReDoc)
-- **Health Status**: http://localhost:8000/health
+- **Health Status**: http://localhost:8000/health (Shows auto-detected configuration)
 - **System Info**: http://localhost:8000/info
-- **Resource Monitoring**: http://localhost:8000/resources (GPU/CPU utilization)
+- **Hardware Detection**: View auto-detected hardware optimization in health endpoint
 
-### 4️⃣ **Add Your Data**
+### 8️⃣ **Add Your Data**
 ```bash
 # Place documents in the data directory
 mkdir -p data/documents
@@ -138,7 +289,7 @@ curl -X POST "http://localhost:8000/index" \
   -d '{"source_type": "documents", "source_config": {"path": "/app/data/documents"}}'
 ```
 
-### 5️⃣ **Start Chatting**
+### 9️⃣ **Start Chatting**
 ```bash
 # Basic chat
 curl -X POST "http://localhost:8000/chat" \
@@ -491,6 +642,69 @@ docker stats
 - **Unified Memory**: Efficient memory management for M2/M3/M4 systems  
 - **P-Core Utilization**: Optimized thread allocation (8 threads verified)
 - **MPS Integration**: Apple Metal Performance Shaders ready
+
+## 🔧 Troubleshooting
+
+### Common Issues
+
+**🐳 Docker Issues:**
+```bash
+# If services fail to start, check for port conflicts
+docker-compose down
+docker-compose up -d
+
+# Check service logs
+docker-compose logs -f chatbot
+```
+
+**🔧 Configuration Validation:**
+```bash
+# Validate your environment configuration
+python3 validate_env.py --summary
+
+# Check specific env file
+python3 validate_env.py --env-file .env
+
+# Test hardware auto-detection
+python3 -c "
+import sys; sys.path.append('app')
+from config import get_settings
+settings = get_settings()
+print('Detected Profile:', settings.DEPLOYMENT_PROFILE)
+print('CPU Workers:', settings.CPU_WORKERS)
+print('GPU Enabled:', settings.GPU_ENABLED)
+"
+```
+
+**⚡ Performance Issues:**
+- Check `/health` endpoint for component status
+- Monitor resource usage with `docker stats`
+- Apple Silicon users: Ensure you're using the `apple-silicon` profile
+- Increase timeout settings if queries are slow
+
+**🔍 Network Issues:**
+```bash
+# Test service connectivity
+curl -f http://localhost:8000/health || echo "Service not ready"
+
+# Check if all containers are healthy
+docker-compose ps
+```
+
+### Advanced Configuration
+
+**🎛️ Custom Settings:**
+If you need to override auto-detection, create/edit `.env`:
+```bash
+# Override auto-detected values
+CPU_WORKERS=8
+MAX_CONCURRENT_REQUESTS=12
+EMBEDDING_BATCH_SIZE=48
+GPU_ENABLED=false
+```
+
+**📋 Available Environment Variables:**
+See `.env.template` for all configurable options. Most settings are auto-detected, but you can override any value.
 
 ## 🤝 Contributing
 

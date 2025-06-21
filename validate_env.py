@@ -33,13 +33,12 @@ class EnvironmentValidator:
         self.env_cpu_path = self.project_root / ".env.cpu-only"
         
         # Critical environment variables that must be consistent
+        # Note: URLs are now auto-generated, so we focus on components
         self.critical_vars = {
-            "DATABASE_URL",
             "COLLECTION_NAME", 
             "VECTOR_DIMENSION",
             "LLM_MODEL",
-            "EMBEDDING_MODEL",
-            "REDIS_URL"
+            "EMBEDDING_MODEL"
         }
         
         # Variables that are allowed to differ between profiles
@@ -52,13 +51,26 @@ class EnvironmentValidator:
             "MAX_CONCURRENT_REQUESTS"
         }
         
-        # Expected values for standardized variables
-        self.expected_values = {
-            "COLLECTION_NAME": "data_rag_kb",
-            "VECTOR_DIMENSION": "384",
-            "DATABASE_URL": "postgresql://rag_user:rag_pass@postgres:5432/rag_db",
-            "REDIS_URL": "redis://redis:6379/0"
-        }
+        # Load expected values from config instead of hard-coding
+        try:
+            import sys
+            sys.path.append(str(self.project_root / "app"))
+            from config import get_settings
+            settings = get_settings()
+            
+            self.expected_values = {
+                "COLLECTION_NAME": settings.COLLECTION_NAME,
+                "VECTOR_DIMENSION": str(settings.VECTOR_DIMENSION),
+                # URLs are auto-generated, so we check components instead
+                "POSTGRES_PASSWORD": settings.POSTGRES_PASSWORD,
+                "EMBEDDING_MODEL": settings.EMBEDDING_MODEL
+            }
+        except ImportError:
+            # Fallback to basic validation if config can't be loaded
+            self.expected_values = {
+                "COLLECTION_NAME": "data_rag_kb",
+                "VECTOR_DIMENSION": "384"
+            }
     
     def parse_env_file(self, env_file_path: Path) -> Dict[str, str]:
         """Parse environment file and return key-value pairs"""
@@ -122,6 +134,8 @@ class EnvironmentValidator:
                         var_name = left_part.split(':')[0].strip()
                         # Clean up comments from right part
                         cleaned_value = right_part.split('#')[0].strip()
+                        # Remove quotes if present
+                        cleaned_value = cleaned_value.strip('"').strip("'")
                         defaults[var_name] = cleaned_value
         
         return defaults
@@ -156,12 +170,18 @@ class EnvironmentValidator:
                 if var in env_vars:
                     values[f'docker-compose({service})'] = env_vars[var]
             
+            # Skip validation if config.py has None (auto-generated values)
+            if 'config.py' in values and values['config.py'] in ['None', None]:
+                values.pop('config.py')
+            
             # Check for inconsistencies
             unique_values = set(values.values())
             if len(unique_values) > 1:
                 issues.append(f"❌ Inconsistent values for {var}: {values}")
             elif len(unique_values) == 1:
                 print(f"✅ {var}: consistent across all sources")
+            elif len(unique_values) == 0:
+                print(f"✅ {var}: auto-generated (no conflicts)")
         
         # Check expected values in all profile files
         profile_files = [
@@ -189,10 +209,10 @@ class EnvironmentValidator:
         
         env_vars = self.parse_env_file(env_file_path)
         
-        # Check for required variables
+        # Check for essential variables (URLs are auto-generated)
         required_vars = {
-            "DATABASE_URL", "COLLECTION_NAME", "VECTOR_DIMENSION",
-            "OLLAMA_API", "LLM_MODEL", "EMBEDDING_MODEL", "REDIS_URL"
+            "POSTGRES_PASSWORD", "COLLECTION_NAME", "VECTOR_DIMENSION",
+            "LLM_MODEL", "EMBEDDING_MODEL"
         }
         
         missing_vars = required_vars - set(env_vars.keys())
@@ -250,14 +270,23 @@ class EnvironmentValidator:
         # Parse and show key configurations from Apple Silicon profile (as reference)
         env_apple = self.parse_env_file(self.env_apple_path)
         
-        report.append("\nKey Configuration Values (Apple Silicon Profile):")
+        report.append("\nKey Configuration Values (from .env file):")
+        # Check which env file exists and use it
+        env_file_to_check = None
+        if Path(".env").exists():
+            env_file_to_check = self.parse_env_file(Path(".env"))
+        elif self.env_apple_path.exists():
+            env_file_to_check = env_apple
+        else:
+            env_file_to_check = {}
+            
         key_vars = [
-            "COLLECTION_NAME", "VECTOR_DIMENSION", "DATABASE_URL",
-            "EMBEDDING_MODEL", "GPU_ENABLED", "MCP_ENABLED", "DB_QUERY_ENABLED"
+            "POSTGRES_PASSWORD", "COLLECTION_NAME", "VECTOR_DIMENSION",
+            "EMBEDDING_MODEL", "LLM_MODEL", "MCP_ENABLED", "DB_QUERY_ENABLED"
         ]
         
         for var in key_vars:
-            value = env_apple.get(var, "NOT SET")
+            value = env_file_to_check.get(var, "AUTO-DETECTED" if var in ["GPU_ENABLED", "CPU_WORKERS"] else "NOT SET")
             report.append(f"  {var}: {value}")
         
         report.append(f"\nProfile Files Available:")
@@ -322,14 +351,13 @@ def main():
     else:
         print("\n✅ All environment validations passed!")
         print("\n💡 Quick setup commands:")
-        print("  # For Apple Silicon:")
-        print("  cp .env.apple-silicon .env")
-        print("  docker-compose up -d")
-        print("\n  # For NVIDIA GPU:")
-        print("  cp .env.nvidia-gpu .env")
-        print("  docker-compose --profile nvidia-gpu up -d")
-        print("\n  # For CPU-only:")
-        print("  cp .env.cpu-only .env")
+        print("  # Using simplified configuration:")
+        print("  cp .env.template .env")
+        print("  # Edit .env and set POSTGRES_PASSWORD")
+        print("  docker-compose up -d  # Auto-detects best profile")
+        print("\n  # Or use specific hardware profiles:")
+        print("  docker-compose --profile apple-silicon up -d")
+        print("  docker-compose --profile nvidia-gpu up -d") 
         print("  docker-compose --profile cpu-only up -d")
 
 if __name__ == "__main__":

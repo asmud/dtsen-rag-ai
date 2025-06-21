@@ -3,10 +3,19 @@ from typing import Optional, List
 from pydantic import BaseModel, field_validator
 from pydantic_settings import BaseSettings
 import logging
+import platform
+import psutil
 
 class Settings(BaseSettings):
-    # Database Configuration
-    DATABASE_URL: str = "postgresql://rag_user:rag_pass@postgres:5432/rag_db"
+    # Essential Configuration (must be set)
+    POSTGRES_PASSWORD: str = "rag_pass"  # Only essential variable that needs to be set
+    
+    # Database Configuration - Smart defaults using Docker service names
+    DATABASE_URL: Optional[str] = None  # Auto-generated from components
+    POSTGRES_HOST: str = "postgres"
+    POSTGRES_PORT: int = 5432
+    POSTGRES_DB: str = "rag_db"
+    POSTGRES_USER: str = "rag_user"
     DB_POOL_SIZE: int = 10
     DB_MAX_OVERFLOW: int = 20
     DB_POOL_TIMEOUT: int = 30
@@ -15,27 +24,29 @@ class Settings(BaseSettings):
     COLLECTION_NAME: str = "data_rag_kb"
     VECTOR_DIMENSION: int = 384  # all-MiniLM-L6-v2 dimension
     
-    # LLM Configuration
-    OLLAMA_API: str = "http://ollama:11434"
+    # LLM Configuration - Smart defaults
+    OLLAMA_HOST: str = "ollama"
+    OLLAMA_PORT: int = 11434
+    OLLAMA_API: Optional[str] = None  # Auto-generated
     LLM_MODEL: str = "gemma2:2b"
     LLM_FALLBACK_MODEL: str = "llama3"
     LLM_TEMPERATURE: float = 0.1
     LLM_MAX_TOKENS: int = 512
     LLM_TIMEOUT: int = 120
     
-    # Embedding Configuration
+    # Embedding Configuration - Auto-detected optimal settings
     EMBEDDING_MODEL: str = "sentence-transformers/all-MiniLM-L6-v2"
-    EMBEDDING_FALLBACK_MODEL: str = "BAAI/bge-m3"
-    EMBEDDING_DEVICE: str = "auto"  # auto, cpu, cuda, or cuda:0
-    EMBEDDING_BATCH_SIZE: int = 32
-    EMBEDDING_BATCH_SIZE_GPU: int = 64  # Larger batch size for GPU
+    EMBEDDING_FALLBACK_MODEL: str = "sentence-transformers/all-MiniLM-L6-v2"
+    EMBEDDING_DEVICE: str = "auto"  # Auto-detect best device
+    EMBEDDING_BATCH_SIZE: Optional[int] = None  # Auto-detect based on hardware
+    EMBEDDING_BATCH_SIZE_GPU: Optional[int] = None  # Auto-detect based on GPU
     
-    # GPU Resource Management
-    GPU_ENABLED: bool = False  # Enable GPU detection and usage
-    GPU_DEVICE_ID: Optional[int] = None  # Specific GPU device (None = auto)
-    GPU_MEMORY_FRACTION: float = 0.8  # Fraction of GPU memory to use
-    CPU_WORKERS: int = 4  # Number of CPU workers for parallel processing
-    MIXED_PRECISION: bool = False  # Use mixed precision for GPU operations
+    # Hardware Configuration - Auto-detected
+    GPU_ENABLED: Optional[bool] = None  # Auto-detect GPU availability
+    GPU_DEVICE_ID: Optional[int] = None  # Auto-detect best GPU
+    GPU_MEMORY_FRACTION: float = 0.8
+    CPU_WORKERS: Optional[int] = None  # Auto-detect based on CPU cores
+    MIXED_PRECISION: Optional[bool] = None  # Auto-detect based on hardware
     
     # Document Processing
     MAX_CHUNK_SIZE: int = 512
@@ -59,21 +70,24 @@ class Settings(BaseSettings):
     API_LOG_LEVEL: str = "info"
     CORS_ORIGINS: str = "*"
     
-    # Redis Configuration (for caching and task queue)
-    REDIS_URL: str = "redis://redis:6379/0"
-    REDIS_CACHE_TTL: int = 3600  # 1 hour
+    # Redis Configuration - Smart defaults using Docker service names
+    REDIS_HOST: str = "redis"
+    REDIS_PORT: int = 6379
+    REDIS_DB: int = 0
+    REDIS_URL: Optional[str] = None  # Auto-generated
+    REDIS_CACHE_TTL: int = 3600
     REDIS_MAX_CONNECTIONS: int = 10
     
-    # Task Queue Configuration
-    CELERY_BROKER_URL: str = "redis://redis:6379/1"
-    CELERY_RESULT_BACKEND: str = "redis://redis:6379/2"
+    # Task Queue Configuration - Auto-generated URLs
+    CELERY_BROKER_URL: Optional[str] = None  # Auto-generated as redis://redis:6379/1
+    CELERY_RESULT_BACKEND: Optional[str] = None  # Auto-generated as redis://redis:6379/2
     TASK_QUEUE_ENABLED: bool = True
     
-    # Performance Settings
+    # Performance Settings - Auto-optimized based on hardware
     ENABLE_CACHING: bool = True
     BATCH_PROCESSING: bool = True
     ASYNC_PROCESSING: bool = True
-    MAX_CONCURRENT_REQUESTS: int = 10
+    MAX_CONCURRENT_REQUESTS: Optional[int] = None  # Auto-detect based on CPU cores
     REQUEST_TIMEOUT: int = 180
     
     # Logging Configuration
@@ -97,12 +111,12 @@ class Settings(BaseSettings):
     
     # MCP (Model Context Protocol) Settings
     MCP_ENABLED: bool = True
-    MCP_SERVER_URL: Optional[str] = "https://jsonplaceholder.typicode.com"
+    MCP_SERVER_URL: str = "https://jsonplaceholder.typicode.com"
     MCP_API_KEY: Optional[str] = None
     
-    # Database Query Settings
+    # Database Query Settings - Uses main database connection
     DB_QUERY_ENABLED: bool = True
-    DB_QUERY_URL: Optional[str] = "postgresql://rag_user:rag_pass@postgres:5432/rag_db"
+    DB_QUERY_URL: Optional[str] = None  # Uses DATABASE_URL
     DB_QUERY_TIMEOUT: int = 30
     DB_QUERY_MAX_ROWS: int = 1000
     
@@ -140,6 +154,9 @@ Guidelines:
     SYSTEM_PROMPT_OVERRIDE_ALLOWED: bool = True
     SYSTEM_PROMPT_TEMPLATE_ENABLED: bool = True
     
+    # Hardware Detection Results (set by auto_detect_hardware)
+    DEPLOYMENT_PROFILE: Optional[str] = None
+    
     @field_validator('LOG_LEVEL')
     @classmethod
     def validate_log_level(cls, v):
@@ -176,6 +193,250 @@ Guidelines:
             return [origin.strip() for origin in self.CORS_ORIGINS.split(',')]
         return self.CORS_ORIGINS
     
+    def get_database_url(self) -> str:
+        """Generate database URL from components"""
+        if self.DATABASE_URL:
+            return self.DATABASE_URL
+        return f"postgresql://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}@{self.POSTGRES_HOST}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"
+    
+    def get_redis_url(self) -> str:
+        """Generate Redis URL from components"""
+        if self.REDIS_URL:
+            return self.REDIS_URL
+        return f"redis://{self.REDIS_HOST}:{self.REDIS_PORT}/{self.REDIS_DB}"
+    
+    def get_ollama_api(self) -> str:
+        """Generate Ollama API URL"""
+        if self.OLLAMA_API:
+            return self.OLLAMA_API
+        return f"http://{self.OLLAMA_HOST}:{self.OLLAMA_PORT}"
+    
+    def get_celery_broker_url(self) -> str:
+        """Generate Celery broker URL"""
+        if self.CELERY_BROKER_URL:
+            return self.CELERY_BROKER_URL
+        return f"redis://{self.REDIS_HOST}:{self.REDIS_PORT}/1"
+    
+    def get_celery_result_backend(self) -> str:
+        """Generate Celery result backend URL"""
+        if self.CELERY_RESULT_BACKEND:
+            return self.CELERY_RESULT_BACKEND
+        return f"redis://{self.REDIS_HOST}:{self.REDIS_PORT}/2"
+    
+    def get_db_query_url(self) -> str:
+        """Get database query URL (same as main database)"""
+        return self.DB_QUERY_URL or self.get_database_url()
+    
+    def detect_hardware_profile(self) -> str:
+        """Detect optimal deployment profile based on hardware"""
+        try:
+            # Check for Apple Silicon
+            if platform.machine() in ['arm64', 'aarch64'] and platform.system() == 'Darwin':
+                return 'apple-silicon'
+            
+            # Check for NVIDIA GPU
+            try:
+                import torch
+                if torch.cuda.is_available():
+                    return 'nvidia-gpu'
+            except ImportError:
+                pass
+            
+            # Check for NVIDIA GPU via nvidia-smi
+            try:
+                import subprocess
+                result = subprocess.run(['nvidia-smi'], capture_output=True, text=True, timeout=5)
+                if result.returncode == 0:
+                    return 'nvidia-gpu'
+            except (FileNotFoundError, subprocess.TimeoutExpired):
+                pass
+            
+            # Default to CPU-only
+            return 'cpu-only'
+            
+        except Exception:
+            return 'cpu-only'
+    
+    def auto_detect_hardware(self):
+        """Enhanced auto-detect optimal hardware settings"""
+        try:
+            # Detect hardware profile
+            hardware_profile = self.detect_hardware_profile()
+            
+            # Get system information
+            cpu_count = psutil.cpu_count(logical=True)
+            cpu_physical = psutil.cpu_count(logical=False)
+            memory_gb = psutil.virtual_memory().total / (1024**3)
+            
+            # Auto-detect CPU workers based on hardware profile and system specs
+            if self.CPU_WORKERS is None:
+                if hardware_profile == 'apple-silicon':
+                    # Apple Silicon: Use more workers due to efficient cores
+                    self.CPU_WORKERS = max(2, min(cpu_count - 1, int(cpu_count * 0.8)))
+                elif hardware_profile == 'nvidia-gpu':
+                    # GPU systems: Conservative CPU usage, let GPU handle heavy work
+                    self.CPU_WORKERS = max(2, min(cpu_physical, 8))
+                else:
+                    # CPU-only: More aggressive CPU usage
+                    self.CPU_WORKERS = max(2, min(cpu_count - 1, int(cpu_count * 0.9)))
+            
+            # Auto-detect max concurrent requests
+            if self.MAX_CONCURRENT_REQUESTS is None:
+                if hardware_profile == 'apple-silicon':
+                    # Apple Silicon can handle more concurrent requests efficiently
+                    self.MAX_CONCURRENT_REQUESTS = max(4, min(self.CPU_WORKERS * 2, 16))
+                elif hardware_profile == 'nvidia-gpu':
+                    # GPU systems: Higher concurrency for parallel processing
+                    self.MAX_CONCURRENT_REQUESTS = max(8, min(self.CPU_WORKERS * 3, 32))
+                else:
+                    # CPU-only: Conservative concurrency
+                    self.MAX_CONCURRENT_REQUESTS = max(4, min(self.CPU_WORKERS, 12))
+            
+            # Auto-detect GPU settings
+            if self.GPU_ENABLED is None:
+                if hardware_profile == 'nvidia-gpu':
+                    try:
+                        import torch
+                        self.GPU_ENABLED = torch.cuda.is_available()
+                        if self.GPU_ENABLED and self.MIXED_PRECISION is None:
+                            self.MIXED_PRECISION = True
+                    except ImportError:
+                        self.GPU_ENABLED = False
+                        self.MIXED_PRECISION = False
+                else:
+                    self.GPU_ENABLED = False
+                    self.MIXED_PRECISION = False
+            
+            # Auto-detect embedding batch sizes based on hardware and memory
+            if self.EMBEDDING_BATCH_SIZE is None:
+                if hardware_profile == 'apple-silicon':
+                    # Apple Silicon: Optimized for unified memory
+                    if memory_gb >= 16:
+                        self.EMBEDDING_BATCH_SIZE = 64
+                        self.EMBEDDING_BATCH_SIZE_GPU = 32
+                    elif memory_gb >= 8:
+                        self.EMBEDDING_BATCH_SIZE = 48
+                        self.EMBEDDING_BATCH_SIZE_GPU = 24
+                    else:
+                        self.EMBEDDING_BATCH_SIZE = 32
+                        self.EMBEDDING_BATCH_SIZE_GPU = 16
+                elif hardware_profile == 'nvidia-gpu':
+                    # NVIDIA GPU: Higher batch sizes for GPU acceleration
+                    if memory_gb >= 16:
+                        self.EMBEDDING_BATCH_SIZE = 128
+                        self.EMBEDDING_BATCH_SIZE_GPU = 256
+                    elif memory_gb >= 8:
+                        self.EMBEDDING_BATCH_SIZE = 96
+                        self.EMBEDDING_BATCH_SIZE_GPU = 192
+                    else:
+                        self.EMBEDDING_BATCH_SIZE = 64
+                        self.EMBEDDING_BATCH_SIZE_GPU = 128
+                else:
+                    # CPU-only: Conservative batch sizes
+                    if memory_gb >= 16:
+                        self.EMBEDDING_BATCH_SIZE = 48
+                        self.EMBEDDING_BATCH_SIZE_GPU = 16
+                    elif memory_gb >= 8:
+                        self.EMBEDDING_BATCH_SIZE = 32
+                        self.EMBEDDING_BATCH_SIZE_GPU = 16
+                    else:
+                        self.EMBEDDING_BATCH_SIZE = 24
+                        self.EMBEDDING_BATCH_SIZE_GPU = 12
+            
+            # Set deployment profile for reference
+            if self.DEPLOYMENT_PROFILE is None:
+                self.DEPLOYMENT_PROFILE = hardware_profile
+            
+            # Auto-detect embedding device
+            if self.EMBEDDING_DEVICE == "auto":
+                if hardware_profile == 'nvidia-gpu' and self.GPU_ENABLED:
+                    self.EMBEDDING_DEVICE = "cuda"
+                elif hardware_profile == 'apple-silicon':
+                    # Apple Silicon: Use MPS if available, otherwise CPU
+                    try:
+                        import torch
+                        if hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
+                            self.EMBEDDING_DEVICE = "mps"
+                        else:
+                            self.EMBEDDING_DEVICE = "cpu"
+                    except ImportError:
+                        self.EMBEDDING_DEVICE = "cpu"
+                else:
+                    self.EMBEDDING_DEVICE = "cpu"
+            
+            # Set URLs if not already set
+            if not self.DATABASE_URL:
+                self.DATABASE_URL = self.get_database_url()
+            if not self.REDIS_URL:
+                self.REDIS_URL = self.get_redis_url()
+            if not self.OLLAMA_API:
+                self.OLLAMA_API = self.get_ollama_api()
+            if not self.CELERY_BROKER_URL:
+                self.CELERY_BROKER_URL = self.get_celery_broker_url()
+            if not self.CELERY_RESULT_BACKEND:
+                self.CELERY_RESULT_BACKEND = self.get_celery_result_backend()
+            if not self.DB_QUERY_URL:
+                self.DB_QUERY_URL = self.get_db_query_url()
+                
+        except Exception as e:
+            # Fallback to conservative defaults if auto-detection fails
+            logging.warning(f"Hardware auto-detection failed: {e}. Using conservative defaults.")
+            if self.CPU_WORKERS is None:
+                self.CPU_WORKERS = 4
+            if self.MAX_CONCURRENT_REQUESTS is None:
+                self.MAX_CONCURRENT_REQUESTS = 8
+            if self.GPU_ENABLED is None:
+                self.GPU_ENABLED = False
+            if self.MIXED_PRECISION is None:
+                self.MIXED_PRECISION = False
+            if self.EMBEDDING_BATCH_SIZE is None:
+                self.EMBEDDING_BATCH_SIZE = 32
+                self.EMBEDDING_BATCH_SIZE_GPU = 16
+            if self.EMBEDDING_DEVICE == "auto":
+                self.EMBEDDING_DEVICE = "cpu"
+    
+    def get_hardware_info(self) -> dict:
+        """Get comprehensive hardware detection information"""
+        try:
+            memory_gb = psutil.virtual_memory().total / (1024**3)
+            cpu_count = psutil.cpu_count(logical=True)
+            cpu_physical = psutil.cpu_count(logical=False)
+            
+            return {
+                'deployment_profile': getattr(self, 'DEPLOYMENT_PROFILE', 'unknown'),
+                'platform': {
+                    'system': platform.system(),
+                    'machine': platform.machine(),
+                    'processor': platform.processor(),
+                },
+                'cpu': {
+                    'logical_cores': cpu_count,
+                    'physical_cores': cpu_physical,
+                    'workers_configured': self.CPU_WORKERS,
+                },
+                'memory': {
+                    'total_gb': round(memory_gb, 2),
+                    'available_gb': round(psutil.virtual_memory().available / (1024**3), 2),
+                },
+                'gpu': {
+                    'enabled': self.GPU_ENABLED,
+                    'mixed_precision': self.MIXED_PRECISION,
+                    'device_id': self.GPU_DEVICE_ID,
+                },
+                'optimization': {
+                    'embedding_device': self.EMBEDDING_DEVICE,
+                    'embedding_batch_size': self.EMBEDDING_BATCH_SIZE,
+                    'embedding_batch_size_gpu': self.EMBEDDING_BATCH_SIZE_GPU,
+                    'max_concurrent_requests': self.MAX_CONCURRENT_REQUESTS,
+                },
+                'urls': {
+                    'database': self.get_database_url(),
+                    'redis': self.get_redis_url(),
+                    'ollama': self.get_ollama_api(),
+                }
+            }
+        except Exception as e:
+            return {'error': f'Failed to get hardware info: {e}'}
     
     model_config = {
         "env_file": ".env",
@@ -184,6 +445,8 @@ Guidelines:
 
 # Global settings instance
 settings = Settings()
+# Auto-detect hardware and generate URLs on initialization
+settings.auto_detect_hardware()
 
 # Configure logging
 def setup_logging():
@@ -207,19 +470,25 @@ def get_settings() -> Settings:
 
 def validate_environment():
     """Validate critical environment variables"""
-    critical_vars = [
-        'DATABASE_URL',
-        'OLLAMA_API',
-        'COLLECTION_NAME'
-    ]
+    # Check essential variables that must be set
+    if not settings.POSTGRES_PASSWORD:
+        raise ValueError("POSTGRES_PASSWORD must be set")
     
-    missing_vars = []
-    for var in critical_vars:
-        if not getattr(settings, var):
-            missing_vars.append(var)
-    
-    if missing_vars:
-        raise ValueError(f"Missing critical environment variables: {missing_vars}")
+    # Check that auto-generated URLs are valid
+    try:
+        database_url = settings.get_database_url()
+        ollama_api = settings.get_ollama_api()
+        redis_url = settings.get_redis_url()
+        
+        logger.info(f"Database URL: {database_url}")
+        logger.info(f"Ollama API: {ollama_api}")
+        logger.info(f"Redis URL: {redis_url}")
+        logger.info(f"CPU Workers: {settings.CPU_WORKERS}")
+        logger.info(f"GPU Enabled: {settings.GPU_ENABLED}")
+        logger.info(f"Max Concurrent Requests: {settings.MAX_CONCURRENT_REQUESTS}")
+        
+    except Exception as e:
+        raise ValueError(f"Error generating configuration URLs: {e}")
     
     logger.info("Environment validation successful")
     return True

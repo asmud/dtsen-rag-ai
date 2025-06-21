@@ -72,34 +72,39 @@ class DatabaseVerifier:
     async def verify_main_table(self) -> Dict[str, Any]:
         """Verify main vector table exists with correct schema"""
         try:
+            # Get table name from environment or use default
+            import os
+            table_name = os.getenv('COLLECTION_NAME', 'data_rag_kb')
+            
             # Check if table exists
             table_exists = await self.connection.fetchrow(
-                "SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_name = 'data_rag_kb') as exists"
+                "SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_name = $1) as exists",
+                table_name
             )
             
             if not table_exists['exists']:
-                logger.error("✗ Main table 'data_rag_kb' does not exist")
+                logger.error(f"✗ Main table '{table_name}' does not exist")
                 return {'status': 'missing', 'details': 'Table not found'}
             
             # Check table schema
             columns = await self.connection.fetch("""
                 SELECT column_name, data_type, is_nullable, column_default
                 FROM information_schema.columns 
-                WHERE table_name = 'data_rag_kb'
+                WHERE table_name = $1
                 ORDER BY ordinal_position
-            """)
+            """, table_name)
             
             expected_columns = {'id', 'text', 'metadata', 'embedding', 'created_at', 'updated_at'}
             actual_columns = {col['column_name'] for col in columns}
             
             if expected_columns.issubset(actual_columns):
-                logger.info("✓ Main table 'data_rag_kb' exists with correct schema")
+                logger.info(f"✓ Main table '{table_name}' exists with correct schema")
                 
                 # Check vector dimension if table has data
                 vector_info = await self.connection.fetchrow(
-                    "SELECT COUNT(*) as row_count, "
-                    "CASE WHEN COUNT(*) > 0 THEN vector_dims(embedding) ELSE 0 END as dimension "
-                    "FROM data_rag_kb LIMIT 1"
+                    f"SELECT COUNT(*) as row_count, "
+                    f"CASE WHEN COUNT(*) > 0 THEN vector_dims(embedding) ELSE 0 END as dimension "
+                    f"FROM {table_name} LIMIT 1"
                 )
                 
                 return {
@@ -120,19 +125,23 @@ class DatabaseVerifier:
     async def verify_indexes(self) -> Dict[str, Any]:
         """Verify required indexes exist"""
         try:
+            # Get table name from environment or use default
+            import os
+            table_name = os.getenv('COLLECTION_NAME', 'data_rag_kb')
+            
             indexes = await self.connection.fetch("""
                 SELECT indexname, indexdef
                 FROM pg_indexes 
-                WHERE tablename = 'data_rag_kb'
+                WHERE tablename = $1
                 ORDER BY indexname
-            """)
+            """, table_name)
             
             index_names = [idx['indexname'] for idx in indexes]
             
-            # Check for critical indexes
+            # Check for critical indexes (using dynamic table name)
             required_indexes = [
-                'data_rag_kb_embedding_cosine_idx',
-                'data_rag_kb_metadata_idx'
+                f'{table_name}_embedding_cosine_idx',
+                f'{table_name}_metadata_idx'
             ]
             
             missing_indexes = [idx for idx in required_indexes if not any(req in name for name in index_names for req in [idx])]
@@ -273,11 +282,12 @@ class DatabaseVerifier:
             
             config_dict = {row['key']: row['value'] for row in config}
             
-            # Verify expected configuration
+            # Verify expected configuration using environment variables
+            import os
             expected_config = {
-                'vector_dimension': 384,
-                'embedding_model': 'sentence-transformers/all-MiniLM-L6-v2',
-                'collection_name': 'data_rag_kb'
+                'vector_dimension': int(os.getenv('VECTOR_DIMENSION', '384')),
+                'embedding_model': os.getenv('EMBEDDING_MODEL', 'sentence-transformers/all-MiniLM-L6-v2'),
+                'collection_name': os.getenv('COLLECTION_NAME', 'data_rag_kb')
             }
             
             issues = []
@@ -413,8 +423,8 @@ Examples:
     )
     parser.add_argument(
         '--connection-string',
-        default="postgresql://rag_user:rag_pass@localhost:5432/rag_db",
-        help="PostgreSQL connection string"
+        default=None,
+        help="PostgreSQL connection string (auto-detected from environment if not provided)"
     )
     parser.add_argument(
         '--json-output',
@@ -424,7 +434,29 @@ Examples:
     
     args = parser.parse_args()
     
-    verifier = DatabaseVerifier(args.connection_string)
+    # Auto-detect connection string if not provided
+    connection_string = args.connection_string
+    if not connection_string:
+        try:
+            # Try to load from config
+            import sys
+            import os
+            sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'app'))
+            from config import get_settings
+            settings = get_settings()
+            connection_string = settings.get_database_url()
+            logger.info(f"Auto-detected connection string from environment")
+        except Exception as e:
+            # Fallback to default with environment variables
+            postgres_password = os.getenv('POSTGRES_PASSWORD', 'rag_pass')
+            postgres_host = os.getenv('POSTGRES_HOST', 'localhost')
+            postgres_port = os.getenv('POSTGRES_PORT', '5432')
+            postgres_db = os.getenv('POSTGRES_DB', 'rag_db')
+            postgres_user = os.getenv('POSTGRES_USER', 'rag_user')
+            connection_string = f"postgresql://{postgres_user}:{postgres_password}@{postgres_host}:{postgres_port}/{postgres_db}"
+            logger.info(f"Using environment variables for connection string")
+    
+    verifier = DatabaseVerifier(connection_string)
     
     try:
         results = await verifier.run_full_verification()
