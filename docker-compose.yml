@@ -2,8 +2,8 @@
 # RAG CHATBOT - 3 DEPLOYMENT PROFILES
 # ==============================================================================
 #
-# 1. APPLE SILICON (DEFAULT) - For Mac M2/M3/M4 Pro/Max/Ultra
-#    Usage: docker-compose up -d
+# 1. APPLE SILICON - For Mac M2/M3/M4 Pro/Max/Ultra
+#    Usage: docker-compose --profile apple-silicon up -d
 #    Features: ARM64 optimized, unified memory management, Apple Silicon specific tuning
 #    Services: ollama + chatbot (both optimized for Apple Silicon)
 #
@@ -22,7 +22,6 @@
 # Background processing with Celery (optional for any profile):
 #   docker-compose --profile with-celery up -d
 # ==============================================================================
-version: '3.8'
 
 services:
   postgres:
@@ -60,7 +59,7 @@ services:
   ollama:
     image: asmud/ollama:latest-arm64
     container_name: dtsen_rag_ollama_apple
-    #platform: linux/arm64
+    platform: linux/arm64
     ports:
       - "11434:11434"
     restart: unless-stopped
@@ -79,6 +78,8 @@ services:
       timeout: 10s
       retries: 3
       start_period: 120s  # Allow time for model downloads
+    profiles:
+      - apple-silicon
 
   # Apple Silicon M2 Pro optimizations
   chatbot:
@@ -111,12 +112,14 @@ services:
       - ./data:/app/data
       - ./backups:/app/backups
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/', timeout=5).read()"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 120s #allow embed model to load
     restart: unless-stopped
+    profiles:
+      - apple-silicon
 
   # NVIDIA GPU optimized Ollama service (for systems with NVIDIA GPUs)
   ollama-nvidia:
@@ -189,7 +192,7 @@ services:
       - ./data:/app/data
       - ./backups:/app/backups
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/', timeout=5).read()"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -201,6 +204,7 @@ services:
   # CPU-only Ollama service (fallback for any system without GPU)
   ollama-cpu:
     image: asmud/ollama:latest
+    platform: linux/amd64
     container_name: dtsen_rag_ollama_cpu
     ports:
       - "11434:11434"
@@ -232,6 +236,7 @@ services:
   # CPU-only chatbot service
   chatbot-cpu:
     build: ./app
+    platform: linux/amd64
     container_name: dtsen_rag_chatbot_cpu
     env_file:
       - .env.cpu-only
@@ -246,15 +251,17 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      ollama-cpu:
+        condition: service_healthy
     volumes:
       - ./data:/app/data
       - ./backups:/app/backups
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/', timeout=5).read()"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 120s #allow model to load
+      start_period: 120s #allow models to load in CPU-only mode
     restart: unless-stopped
     profiles:
       - cpu-only

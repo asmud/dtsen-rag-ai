@@ -5,8 +5,10 @@ from typing import List, Dict, Any, Optional
 from datetime import datetime
 from urllib.parse import urljoin, urlparse
 import time
+import re
 
-from crawl4ai import AsyncWebCrawler
+import httpx
+from bs4 import BeautifulSoup
 
 from connectors.base_connector import BaseConnector
 from models.document import Document, DocumentMetadata
@@ -14,11 +16,11 @@ from models.document import Document, DocumentMetadata
 logger = logging.getLogger(__name__)
 
 class WebConnector(BaseConnector):
-    """Connector for web content using crawl4ai"""
+    """Connector for web content using httpx and BeautifulSoup"""
     
     def __init__(self):
         super().__init__()
-        self.crawler = None
+        self.client = None
         self.rate_limit = self.settings.CRAWL_RATE_LIMIT
         self.timeout = self.settings.CRAWL_TIMEOUT
         self.max_pages = self.settings.CRAWL_MAX_PAGES
@@ -29,40 +31,52 @@ class WebConnector(BaseConnector):
         self._last_request_time = 0
     
     async def connect(self) -> bool:
-        """Initialize the web crawler"""
+        """Initialize the HTTP client"""
         try:
-            self.crawler = AsyncWebCrawler(
-                verbose=False,
-                headless=True,
-                browser_type="chromium"
+            # Close existing client if it exists
+            if self.client:
+                try:
+                    await self.client.aclose()
+                except:
+                    pass
+            
+            self.client = httpx.AsyncClient(
+                timeout=self.timeout,
+                headers={
+                    'User-Agent': self.user_agent,
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                    'Accept-Language': 'en-US,en;q=0.5',
+                    'Accept-Encoding': 'gzip, deflate',
+                    'Connection': 'keep-alive',
+                    'Upgrade-Insecure-Requests': '1',
+                },
+                follow_redirects=True,
+                limits=httpx.Limits(max_keepalive_connections=10, max_connections=100)
             )
-            await self.crawler.start()
             self._connected = True
-            logger.info("Connected to web crawler")
+            logger.info("Connected to web client")
             return True
             
         except Exception as e:
-            logger.error(f"Failed to connect to web crawler: {e}")
+            logger.error(f"Failed to connect to web client: {e}")
+            self._connected = False
             return False
     
     async def disconnect(self) -> bool:
-        """Close the web crawler"""
+        """Close the HTTP client"""
         try:
-            if self.crawler:
-                await self.crawler.close()
+            if self.client:
+                await self.client.aclose()
             self._connected = False
-            logger.info("Disconnected from web crawler")
+            logger.info("Disconnected from web client")
             return True
             
         except Exception as e:
-            logger.error(f"Error disconnecting web crawler: {e}")
+            logger.error(f"Error disconnecting web client: {e}")
             return False
     
     async def fetch_data(self, **kwargs) -> List[Document]:
         """Fetch web content from URLs"""
-        if not self._connected:
-            await self.connect()
-        
         urls = kwargs.get('urls', [])
         if not urls:
             logger.warning("No URLs provided for web crawling")
@@ -70,34 +84,45 @@ class WebConnector(BaseConnector):
         
         documents = []
         crawled_count = 0
+        max_retries = 3
         
-        try:
-            for url in urls:
-                if crawled_count >= self.max_pages:
-                    logger.info(f"Reached maximum page limit: {self.max_pages}")
-                    break
-                
-                # Rate limiting
-                await self._rate_limit_delay()
-                
-                # Crawl single URL
-                doc = await self._crawl_url(url)
-                if doc:
-                    documents.append(doc)
-                    crawled_count += 1
-                
-                # If crawling with depth, get linked pages (temporarily disabled for testing)
-                # if self.max_depth > 1:
-                #     linked_docs = await self._crawl_with_depth(url, depth=1)
-                #     documents.extend(linked_docs[:self.max_pages - crawled_count])
-                #     crawled_count += len(linked_docs)
+        # Ensure connection
+        if not self._connected:
+            await self.connect()
+        
+        for url in urls:
+            if crawled_count >= self.max_pages:
+                logger.info(f"Reached maximum page limit: {self.max_pages}")
+                break
             
-            logger.info(f"Crawled {len(documents)} web pages")
-            return documents
-            
-        except Exception as e:
-            logger.error(f"Error crawling web content: {e}")
-            return documents
+            # Retry mechanism for connection issues
+            for attempt in range(max_retries):
+                try:
+                    # Rate limiting
+                    await self._rate_limit_delay()
+                    
+                    # Crawl single URL
+                    doc = await self._crawl_url(url)
+                    if doc:
+                        documents.append(doc)
+                        crawled_count += 1
+                    break  # Success, break retry loop
+                    
+                except Exception as e:
+                    error_msg = str(e).lower()
+                    # Check for connection errors
+                    if any(keyword in error_msg for keyword in ['timeout', 'connection', 'network']):
+                        logger.warning(f"Connection error on attempt {attempt + 1} for {url}: {e}")
+                        if attempt < max_retries - 1:
+                            # Wait before retry
+                            await asyncio.sleep(2 ** attempt)
+                            continue
+                    else:
+                        logger.error(f"Error crawling {url}: {e}")
+                        break  # Non-connection error, don't retry
+        
+        logger.info(f"Crawled {len(documents)} web pages")
+        return documents
     
     async def _rate_limit_delay(self):
         """Apply rate limiting between requests"""
@@ -117,51 +142,126 @@ class WebConnector(BaseConnector):
         try:
             logger.debug(f"Crawling URL: {url}")
             
-            result = await self.crawler.arun(
-                url=url,
-                word_count_threshold=10,
-                bypass_cache=True,
-                timeout=self.timeout
-            )
-            
-            if not result.success:
-                logger.warning(f"Failed to crawl {url}: {result.error_message}")
+            if not self.client:
+                logger.error(f"HTTP client not initialized for {url}")
                 return None
             
-            if not result.cleaned_html or len(result.cleaned_html.strip()) < 50:
+            # Make HTTP request
+            response = await self.client.get(url)
+            response.raise_for_status()
+            
+            # Parse HTML content
+            soup = BeautifulSoup(response.text, 'lxml')
+            
+            # Extract title
+            title_elem = soup.find('title')
+            title = title_elem.get_text().strip() if title_elem else ''
+            
+            # Remove script and style elements
+            for script in soup(["script", "style", "nav", "footer", "aside"]):
+                script.decompose()
+            
+            # Extract main content
+            content_text = self._extract_main_content(soup)
+            
+            if len(content_text.strip()) < 50:
                 logger.warning(f"No meaningful content found for {url}")
                 return None
+            
+            # Extract links for metadata
+            links = soup.find_all('a', href=True)
+            internal_links = []
+            external_links = []
+            
+            for link in links:
+                href = link['href']
+                if href.startswith('http'):
+                    if urlparse(url).netloc in href:
+                        internal_links.append(href)
+                    else:
+                        external_links.append(href)
+                elif href.startswith('/'):
+                    internal_links.append(urljoin(url, href))
+            
+            # Extract images for metadata
+            images = soup.find_all('img', src=True)
             
             # Create document metadata
             metadata = DocumentMetadata(
                 source="web_crawl",
                 url=url,
-                title=result.metadata.get('title', ''),
+                title=title,
                 file_name=urlparse(url).path.split('/')[-1] or 'index.html',
                 file_type='.html',
                 created_at=datetime.now(),
                 processed_at=datetime.now(),
                 extra_metadata={
-                    'status_code': result.status_code,
-                    'content_length': len(result.cleaned_html),
-                    'links_found': len(result.links.get('internal', [])) + len(result.links.get('external', [])),
-                    'media_found': len(result.media.get('images', [])),
-                    'crawl_timestamp': result.metadata.get('timestamp', ''),
+                    'status_code': response.status_code,
+                    'content_length': len(content_text),
+                    'links_found': len(internal_links) + len(external_links),
+                    'internal_links': len(internal_links),
+                    'external_links': len(external_links),
+                    'media_found': len(images),
+                    'crawl_timestamp': datetime.now().isoformat(),
+                    'content_type': response.headers.get('content-type', ''),
                 }
             )
             
             # Create document
             document = Document(
                 id=str(hash(f"{url}_{datetime.now().isoformat()}")),
-                content=result.cleaned_html,
+                content=content_text,
                 metadata=metadata
             )
             
             return document
             
+        except httpx.HTTPStatusError as e:
+            logger.warning(f"HTTP error {e.response.status_code} for {url}: {e}")
+            return None
+        except httpx.RequestError as e:
+            logger.error(f"Request error for {url}: {e}")
+            raise  # Re-raise to trigger retry logic
         except Exception as e:
             logger.error(f"Error crawling URL {url}: {e}")
             return None
+    
+    def _extract_main_content(self, soup: BeautifulSoup) -> str:
+        """Extract main text content from BeautifulSoup object"""
+        # Try to find main content areas first
+        main_selectors = [
+            'main', 'article', '.content', '#content', 
+            '.main-content', '#main-content', '.post-content',
+            '.entry-content', '.article-content'
+        ]
+        
+        main_content = None
+        for selector in main_selectors:
+            element = soup.select_one(selector)
+            if element:
+                main_content = element
+                break
+        
+        # If no main content found, use body
+        if not main_content:
+            main_content = soup.find('body') or soup
+        
+        # Extract text and clean it up
+        text = main_content.get_text()
+        
+        # Clean up the text
+        lines = []
+        for line in text.splitlines():
+            line = line.strip()
+            if line and len(line) > 3:  # Skip very short lines
+                lines.append(line)
+        
+        # Join lines and clean up extra whitespace
+        content = '\n'.join(lines)
+        content = re.sub(r'\n\s*\n', '\n\n', content)  # Remove excessive newlines
+        content = re.sub(r' +', ' ', content)  # Remove excessive spaces
+        
+        return content.strip()
     
     async def _crawl_with_depth(self, base_url: str, depth: int) -> List[Document]:
         """Crawl linked pages up to specified depth"""
@@ -220,43 +320,53 @@ class WebConnector(BaseConnector):
             return []
     
     async def health_check(self) -> Dict[str, Any]:
-        """Check health of web crawler"""
+        """Check health of web client"""
         try:
-            my_port = os.getenv('API_PORT', '8000')
-            test_url = f"http://localhost:{my_port}"
-            result = await self.crawler.arun(url=test_url, timeout=10)
+            # Check basic connection first
+            if not self._connected or not self.client:
+                await self.connect()
             
-            if result.success:
+            if not self._connected:
                 return {
-                    "status": "healthy",
-                    "crawler_connected": True,
-                    "rate_limit": self.rate_limit,
-                    "max_pages": self.max_pages,
-                    "max_depth": self.max_depth,
-                    "test_crawl": "successful"
+                    "status": "unhealthy",
+                    "message": "Cannot establish client connection",
+                    "crawler_connected": False
                 }
-            else:
-                return {
-                    "status": "degraded",
-                    "message": f"Test crawl failed: {result.error_message}",
-                    "crawler_connected": True
-                }
+            
+            # Simple test - try to fetch a basic page
+            test_url = "https://httpbin.org/robots.txt"
+            response = await self.client.get(test_url, timeout=10)
+            response.raise_for_status()
+            
+            return {
+                "status": "healthy",
+                "crawler_connected": True,
+                "rate_limit": self.rate_limit,
+                "max_pages": self.max_pages,
+                "max_depth": self.max_depth,
+                "test_crawl": "successful"
+            }
                 
         except Exception as e:
+            error_msg = str(e).lower()
+            if any(keyword in error_msg for keyword in ['timeout', 'connection', 'network']):
+                self._connected = False
             return {
                 "status": "unhealthy",
-                "message": f"Health check failed: {e}"
+                "message": f"Health check failed: {e}",
+                "crawler_connected": self._connected
             }
     
     def get_connector_info(self) -> Dict[str, Any]:
         """Return connector metadata"""
         return {
             "name": "WebConnector",
-            "type": "web_crawler",
+            "type": "web_scraper",
             "status": "connected" if self._connected else "disconnected",
             "rate_limit": self.rate_limit,
             "max_pages": self.max_pages,
             "max_depth": self.max_depth,
             "user_agent": self.user_agent,
-            "respect_robots": self.respect_robots
+            "respect_robots": self.respect_robots,
+            "method": "httpx + BeautifulSoup"
         }
