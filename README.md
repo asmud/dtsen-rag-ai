@@ -102,6 +102,22 @@ docker-compose up -d
 # ✅ Starts the optimal services for your platform
 ```
 
+### ⏳ **First-Time Setup Note**
+
+> **📥 Model Download Required**: On first startup, the system will automatically download the LLM model (`gemma2:2b`, ~1.6GB). This typically takes 5-10 minutes depending on your internet connection.
+
+**Monitor download progress:**
+```bash
+# Check model download status
+curl http://localhost:11434/api/tags
+
+# Monitor application startup logs
+docker-compose logs -f chatbot
+
+# Once complete, check system health
+curl http://localhost:8000/health | python3 -m json.tool
+```
+
 **🔍 Check System Health:**
 ```bash
 # Verify all services are running
