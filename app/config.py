@@ -21,7 +21,7 @@ class Settings(BaseSettings):
     LLM_FALLBACK_MODEL: str = "llama3"
     LLM_TEMPERATURE: float = 0.1
     LLM_MAX_TOKENS: int = 512
-    LLM_TIMEOUT: int = 60
+    LLM_TIMEOUT: int = 120
     
     # Embedding Configuration
     EMBEDDING_MODEL: str = "sentence-transformers/all-MiniLM-L6-v2"
@@ -74,7 +74,7 @@ class Settings(BaseSettings):
     BATCH_PROCESSING: bool = True
     ASYNC_PROCESSING: bool = True
     MAX_CONCURRENT_REQUESTS: int = 10
-    REQUEST_TIMEOUT: int = 300
+    REQUEST_TIMEOUT: int = 180
     
     # Logging Configuration
     LOG_LEVEL: str = "INFO"

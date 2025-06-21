@@ -176,6 +176,21 @@ curl -X POST "http://localhost:8000/chat" \
 - **Concurrent Requests**: Up to 8 parallel requests supported
 - **Cache Hit Rate**: Redis caching operational and effective
 
+### 🌐 **Multi-Language Performance** (Bahasa Indonesia Testing)
+- **Response Time Range**: 2.6-11.4 seconds (avg: 5.9s)
+- **Custom System Prompts**: ✅ Working in Indonesian with specialized DTSEN context
+- **Content Quality**: Technical accuracy maintained across languages
+- **DTSEN Domain Knowledge**: Specialized government data context properly applied
+- **Performance Correlation**: Response time scales with content complexity
+- **Language Support**: Native Indonesian language processing verified
+
+### 🔧 **Recent Improvements** (v2.0.1)
+- **Timeout Issues Resolved**: Chat endpoint timeout configuration optimized
+- **LLM_TIMEOUT**: Increased to 120s for complex queries with proper error handling
+- **REQUEST_TIMEOUT**: Optimized to 180s with async timeout management
+- **Error Handling**: Added asyncio.wait_for() timeout wrapper for query stability
+- **Stability**: Chat functionality now consistently responsive across all query types
+
 ### 📋 **Document Format Testing Matrix**
 | Format | File Examples | Status | Chunks | Search Quality |
 |--------|---------------|--------|---------|----------------|

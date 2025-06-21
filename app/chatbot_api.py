@@ -85,13 +85,14 @@ async def initialize_components():
     app_state["embedding_manager"] = EmbeddingManager()
     await app_state["embedding_manager"].initialize()
     
-    # Initialize LLM
+    # Initialize LLM with proper timeout and request timeout
     app_state["llm"] = Ollama(
         model=settings.LLM_MODEL,
         base_url=settings.OLLAMA_API,
         temperature=settings.LLM_TEMPERATURE,
         max_tokens=settings.LLM_MAX_TOKENS,
-        timeout=settings.LLM_TIMEOUT
+        timeout=settings.LLM_TIMEOUT,
+        request_timeout=settings.REQUEST_TIMEOUT
     )
     
     # Create LlamaIndex embedding model
@@ -414,11 +415,17 @@ async def chat(
         else:
             enhanced_question = request.question
         
-        # Query the system
-        response = await asyncio.to_thread(
-            query_engine.query, 
-            enhanced_question
-        )
+        # Query the system with timeout
+        try:
+            response = await asyncio.wait_for(
+                asyncio.to_thread(query_engine.query, enhanced_question),
+                timeout=settings.REQUEST_TIMEOUT
+            )
+        except asyncio.TimeoutError:
+            raise HTTPException(
+                status_code=504,
+                detail=f"Query timeout after {settings.REQUEST_TIMEOUT} seconds"
+            )
         
         # Extract source documents
         sources = []
